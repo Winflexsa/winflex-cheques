@@ -399,8 +399,23 @@ function setSyncState(s,t) { document.getElementById('sync-dot').className='sync
 const fmtM = n => n ? '$'+Math.round(n).toLocaleString('es-AR') : '-';
 const fmtD = s => { if(!s||!s.trim()) return '-'; try{ const d=new Date(s+'T12:00:00'); return isNaN(d)?s:d.toLocaleDateString('es-AR',{day:'2-digit',month:'2-digit',year:'2-digit'}); }catch{return s;} };
 const today = () => new Date().toISOString().split('T')[0];
-const diasHasta = s => { if(!s||!s.trim()) return null; try{ const d=new Date(s+'T12:00:00'),t=new Date(); return Math.ceil((d-t)/(1000*60*60*24)); }catch{return null;} };
-const diasBadge = n => { if(n===null) return ''; if(n<0) return `<span class="dias-badge dias-rojo">vencido</span>`; if(n===0) return `<span class="dias-badge dias-rojo">hoy</span>`; if(n<=7) return `<span class="dias-badge dias-rojo">${n}d</span>`; if(n<=30) return `<span class="dias-badge dias-amarillo">${n}d</span>`; return `<span class="dias-badge dias-verde">${n}d</span>`; };
+const diasHasta = s => {
+  if(!s||!s.trim()) return null;
+  try{
+    const cobro=new Date(s+'T12:00:00');
+    const vence=new Date(cobro.getTime()+30*24*60*60*1000); // 30 días después del cobro
+    const t=new Date();
+    return Math.ceil((vence-t)/(1000*60*60*24));
+  }catch{return null;}
+};
+const diasBadge = n => {
+  if(n===null) return '';
+  if(n<0) return '<span class="dias-badge dias-rojo">vencido</span>';
+  if(n===0) return '<span class="dias-badge dias-rojo">vence hoy</span>';
+  if(n<=7) return '<span class="dias-badge dias-rojo">'+n+'d</span>';
+  if(n<=30) return '<span class="dias-badge dias-amarillo">'+n+'d</span>';
+  return '<span class="dias-badge dias-verde">'+n+'d</span>';
+};
 
 // ── Navegación ──────────────────────────────────────────────────
 function goTo(name, btn) {
