@@ -197,7 +197,7 @@ function saveCfg() {
         <div id="cart1-total" style="font-size:12px;color:var(--text2)"></div>
       </div>
       <div class="card" style="margin-bottom:20px"><div class="tbl-wrap"><table>
-        <thead><tr><th>Fecha recibo</th><th>Importe</th><th>Fecha cobro</th><th>Días</th><th>Banco</th><th>N°</th><th>Cliente</th><th>Recibo</th><th>CUIT</th><th></th></tr></thead>
+        <thead><tr><th>F. Recibo</th><th>Importe</th><th>F. Cobro</th><th>Días</th><th>Banco</th><th>N°</th><th>Cliente</th><th></th></tr></thead>
         <tbody id="cart-body-1"></tbody>
       </table></div></div>
 
@@ -906,7 +906,15 @@ function initAllCombos() {
   initCombo('ed-destino', 'destinos');
 }
 
-async function initApp() { await loadCloud(); renderCartera(); }
+async function initApp() {
+  // Render immediately with local/init data so page is not empty
+  STATE.cheques = JSON.parse(JSON.stringify(CHEQUES_INIT));
+  STATE.nextId = NEXT_ID_INIT;
+  renderCartera(); renderVencimientos(); renderResumen();
+  // Then load from cloud and re-render
+  await loadCloud();
+  renderCartera(); renderVencimientos(); renderHistorial(); renderResumen();
+}
 // ── Manual Save & Load ─────────────────────────────────────────
 async function guardarCambios() {
   setSyncState('loading','Guardando...');
