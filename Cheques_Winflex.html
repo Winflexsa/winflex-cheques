@@ -218,7 +218,7 @@ function saveCfg() {
       <div class="metrics" id="venc-metrics"></div>
       <div id="venc-alertas"></div>
       <div class="card"><div class="tbl-wrap"><table>
-        <thead><tr><th>Caja</th><th>Fecha cobro</th><th>Días</th><th>Importe</th><th>Banco</th><th>N°</th><th>Cliente</th><th>Estado</th><th></th></tr></thead>
+        <thead><tr><th>Caja</th><th>Fecha cobro</th><th>Días</th><th>Importe</th><th>Banco</th><th>N°</th><th>Cliente</th><th></th></tr></thead>
         <tbody id="venc-body"></tbody>
       </table></div></div>
     </div>
@@ -510,16 +510,17 @@ function renderVencimientos() {
   if(hoy.length) alertas+=`<div class="alerta-vence">⚠️ <strong>${hoy.length} cheque${hoy.length>1?'s':''} vencido${hoy.length>1?'s':''} o que vence${hoy.length>1?'n':''} hoy</strong> — Total: ${fmtM(hoy.reduce((a,c)=>a+c.importe,0))}</div>`;
   if(prox7.length) alertas+=`<div class="alerta-vence" style="background:#fffbeb;border-color:#f59e0b">📅 <strong>${prox7.length} cheque${prox7.length>1?'s':''} vence${prox7.length>1?'n':''} esta semana</strong> — Total: ${fmtM(prox7.reduce((a,c)=>a+c.importe,0))}</div>`;
   document.getElementById('venc-alertas').innerHTML=alertas;
+  const cajaLabel = ca => ca==='caja1'?'Caja 1':ca==='caja2'?'Caja 2':'Cartera';
   document.getElementById('venc-body').innerHTML = sorted.map(c=>{
     const d=diasHasta(c.fecha_cobro);
     return `<tr>
+      <td style="font-size:11px;color:var(--text2)">${cajaLabel(c.caja)}</td>
       <td>${fmtD(c.fecha_cobro)}</td>
       <td>${diasBadge(d)}</td>
       <td style="font-weight:600">${fmtM(c.importe)}</td>
       <td>${c.banco}</td>
       <td style="font-family:'DM Mono',monospace;font-size:11px">${c.numero}</td>
       <td style="font-weight:500">${c.cliente||'-'}</td>
-      <td><span class="badge badge-cartera">En cartera</span></td>
       <td style="white-space:nowrap"><button class="btn btn-sm btn-info" onclick="aplicarRapido(${c.id})">Aplicar</button> <button class="btn btn-sm btn-danger" onclick="eliminar(${c.id})" title="Eliminar">✕</button></td>
     </tr>`;
   }).join('') || '<tr><td colspan="8" style="text-align:center;padding:30px;color:var(--text3)">Sin cheques en cartera</td></tr>';
