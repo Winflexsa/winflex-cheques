@@ -361,7 +361,18 @@ let editingId = null;
 let chartBancos=null, chartVenc=null, chartDest=null, chartEvol=null;
 
 // ── Config ──────────────────────────────────────────────────────
-function loadCfg() { CFG.apiKey = '$2a$10$8p4t41BnTv.9Ls.4kFLhouDMqJGQEd5LQlBYEz8n1y6nH/3dFq27G'; CFG.binId = localStorage.getItem('wf_chq_bin')||''; }
+
+// ── Compact field mapping (reduce payload size for JSONBin 100KB limit) ──────
+const _FMAP={fr:'fecha_recibo',im:'importe',fc:'fecha_cobro',bn:'banco',
+  pl:'plaza',nu:'numero',cu:'cuit',re:'recibo',cl:'cliente',
+  es:'estado',de:'destino',fa:'fecha_aplicado',ca:'caja',id:'id'};
+const _RMAP={fecha_recibo:'fr',importe:'im',fecha_cobro:'fc',banco:'bn',
+  plaza:'pl',numero:'nu',cuit:'cu',recibo:'re',cliente:'cl',
+  estado:'es',destino:'de',fecha_aplicado:'fa',caja:'ca',id:'id'};
+function _expand(compact){return compact.map(c=>{const r={};for(const k in c)r[_FMAP[k]||k]=c[k];return r;});}
+function _compact(full){return full.map(c=>{const r={};for(const k in c)r[_RMAP[k]||k]=c[k];return r;});}
+
+function loadCfg() { CFG.apiKey = '$2a$10$8p4t41BnTv.9Ls.4kFLhouDMqJGQEd5LQlBYEz8n1y6nH/3dFq27G'; CFG.binId = '69c6b405aa77b81da9277f9b'; localStorage.setItem('wf_chq_bin','69c6b405aa77b81da9277f9b'); }
 // saveCfg defined in early script above
 
 // ── Cloud ───────────────────────────────────────────────────────
@@ -372,8 +383,8 @@ async function loadCloud() {
     const res = await fetch(`https://api.jsonbin.io/v3/b/${CFG.binId}/latest`,{headers:{'X-Master-Key':CFG.apiKey}});
     if(!res.ok) throw new Error(res.status);
     const d = await res.json();
-    STATE.cheques = d.record.cheques || JSON.parse(JSON.stringify(CHEQUES_INIT));
-    STATE.nextId = d.record.nextId || NEXT_ID_INIT;
+    STATE.cheques = d.record.v===2 ? _expand(d.record.c) : (d.record.cheques || JSON.parse(JSON.stringify(CHEQUES_INIT)));
+    STATE.nextId = d.record.n || d.record.nextId || NEXT_ID_INIT;
     setSyncState('ok','Sincronizado');
   } catch(e) {
     setSyncState('err','Error de conexión');
@@ -385,8 +396,8 @@ async function loadCloud() {
 
 async function saveCloud(isNew) {
   setSyncState('loading','Guardando...');
-  const payload = { cheques: STATE.cheques, nextId: STATE.nextId };
-  localStorage.setItem('wf_chq_local', JSON.stringify(payload));
+  const payload = { c: _compact(STATE.cheques), n: STATE.nextId, v: 2 };
+  localStorage.setItem('wf_chq_local', JSON.stringify({cheques: STATE.cheques, nextId: STATE.nextId}));
   try {
     let res;
     if(isNew||!CFG.binId) {
@@ -902,36 +913,20 @@ async function guardarCambios() {
   setSyncState('loading','Guardando...');
   document.getElementById('btn-guardar').disabled = true;
   try {
-    const payload = { cheques: STATE.cheques, nextId: STATE.nextId };
-    localStorage.setItem('wf_chq_local', JSON.stringify(payload));
-    let binId = localStorage.getItem('wf_chq_bin') || '';
-    let res;
-    if (!binId) {
-      res = await fetch('https://api.jsonbin.io/v3/b', {
-        method: 'POST',
-        headers: {'Content-Type':'application/json','X-Master-Key':CFG.apiKey,'X-Bin-Name':'winflex-cheques'},
-        body: JSON.stringify(payload),
-        signal: AbortSignal.timeout(12000)
-      });
-      if (!res.ok) throw new Error(res.status);
-      const d = await res.json();
-      binId = d.metadata.id;
-      localStorage.setItem('wf_chq_bin', binId);
-      CFG.binId = binId;
-    } else {
-      res = await fetch('https://api.jsonbin.io/v3/b/' + binId, {
-        method: 'PUT',
-        headers: {'Content-Type':'application/json','X-Master-Key':CFG.apiKey},
-        body: JSON.stringify(payload),
-        signal: AbortSignal.timeout(12000)
-      });
-      if (!res.ok) throw new Error(res.status);
-    }
+    const payload = { c: _compact(STATE.cheques), n: STATE.nextId, v: 2 };
+    localStorage.setItem('wf_chq_local', JSON.stringify({cheques: STATE.cheques, nextId: STATE.nextId}));
+    const res = await fetch('https://api.jsonbin.io/v3/b/69c6b405aa77b81da9277f9b', {
+      method: 'PUT',
+      headers: {'Content-Type':'application/json','X-Master-Key':CFG.apiKey},
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(15000)
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
     setSyncState('ok','✓ Guardado');
-    toast('Datos guardados en la nube', 'ok');
+    toast('Datos guardados en la nube (' + STATE.cheques.filter(ch=>ch.id!==1).length + ' cheques)', 'ok');
     setTimeout(()=>setSyncState('idle',''), 4000);
   } catch(e) {
-    setSyncState('err','✗ Sin conexión');
+    setSyncState('err','✗ Error: ' + e.message);
     toast('Error al guardar: ' + e.message, 'warn');
     setTimeout(()=>setSyncState('idle',''), 6000);
   } finally {
@@ -940,7 +935,7 @@ async function guardarCambios() {
 }
 
 async function actualizarDesdeNube() {
-  const binId = localStorage.getItem('wf_chq_bin') || CFG.binId;
+  const binId = '69c6b405aa77b81da9277f9b';
   if (!binId) { toast('No hay datos en la nube todavía. Guardá primero desde otra PC.', 'warn'); return; }
   setSyncState('loading','Actualizando...');
   try {
@@ -952,8 +947,8 @@ async function actualizarDesdeNube() {
     const d = await res.json();
     const data = d.record;
     if (data && data.cheques) {
-      STATE.cheques = data.cheques;
-      STATE.nextId = data.nextId || STATE.nextId;
+      STATE.cheques = data.v===2 ? _expand(data.c) : data.cheques;
+      STATE.nextId = data.n || data.nextId || STATE.nextId;
       localStorage.setItem('wf_chq_local', JSON.stringify({cheques: STATE.cheques, nextId: STATE.nextId}));
       renderCartera(); renderVencimientos(); renderHistorial(); renderResumen();
       setSyncState('ok','✓ Actualizado');
