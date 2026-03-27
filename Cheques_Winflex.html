@@ -478,7 +478,7 @@ function renderCartera() {
       '<td style="font-weight:500">' + (c.cliente||'-') + '</td>' +
       '<td style="font-size:11px">' + (c.recibo||'-') + '</td>' +
       '<td style="font-size:11px;color:var(--text3)">' + (c.cuit||'-') + '</td>' +
-      '<td><button class="btn btn-sm" onclick="abrirEditar(' + c.id + ')">Editar</button></td>' +
+      '<td style="white-space:nowrap">' + '<button class="btn btn-sm" onclick="abrirEditar(' + c.id + ')">Editar</button> ' + '<button class="btn btn-sm btn-danger" onclick="eliminar(' + c.id + ')" title="Eliminar">✕</button>' + '</td>' +
       '</tr>';
   };
 
@@ -520,7 +520,7 @@ function renderVencimientos() {
       <td style="font-family:'DM Mono',monospace;font-size:11px">${c.numero}</td>
       <td style="font-weight:500">${c.cliente||'-'}</td>
       <td><span class="badge badge-cartera">En cartera</span></td>
-      <td><button class="btn btn-sm btn-info" onclick="aplicarRapido(${c.id})">Aplicar</button></td>
+      <td style="white-space:nowrap"><button class="btn btn-sm btn-info" onclick="aplicarRapido(${c.id})">Aplicar</button> <button class="btn btn-sm btn-danger" onclick="eliminar(${c.id})" title="Eliminar">✕</button></td>
     </tr>`;
   }).join('') || '<tr><td colspan="8" style="text-align:center;padding:30px;color:var(--text3)">Sin cheques en cartera</td></tr>';
 }
@@ -963,6 +963,18 @@ async function actualizarDesdeNube() {
     toast('Error al actualizar: ' + e.message, 'warn');
     setTimeout(()=>setSyncState('idle',''), 6000);
   }
+}
+
+
+async function eliminar(id) {
+  const ch = STATE.cheques.find(x => x.id === id);
+  if (!ch) return;
+  const info = `${ch.cliente||'sin cliente'} — $${ch.importe?.toLocaleString('es-AR')} — ${ch.banco} N°${ch.numero}`;
+  if (!confirm(`¿Eliminar este cheque?\n\n${info}\n\nEsta acción no se puede deshacer.`)) return;
+  STATE.cheques = STATE.cheques.filter(x => x.id !== id);
+  localStorage.setItem('wf_chq_local', JSON.stringify({cheques: STATE.cheques, nextId: STATE.nextId}));
+  renderCartera(); renderVencimientos(); renderHistorial(); renderResumen();
+  toast('Cheque eliminado. Guardá para sincronizar.', 'warn');
 }
 
 async function boot() {
