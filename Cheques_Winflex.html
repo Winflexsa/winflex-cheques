@@ -476,8 +476,6 @@ function renderCartera() {
       '<td>' + c.banco + '</td>' +
       '<td style="font-family:DM Mono,monospace;font-size:11px">' + c.numero + '</td>' +
       '<td style="font-weight:500">' + (c.cliente||'-') + '</td>' +
-      '<td style="font-size:11px">' + (c.recibo||'-') + '</td>' +
-      '<td style="font-size:11px;color:var(--text3)">' + (c.cuit||'-') + '</td>' +
       '<td style="white-space:nowrap">' + '<button class="btn btn-sm" onclick="abrirEditar(' + c.id + ')">Editar</button> ' + '<button class="btn btn-sm btn-danger" onclick="eliminar(' + c.id + ')" title="Eliminar">✕</button>' + '</td>' +
       '</tr>';
   };
@@ -487,11 +485,11 @@ function renderCartera() {
 
   document.getElementById('cart-body-1').innerHTML = s1.length
     ? s1.map(makeRow).join('')
-    : '<tr><td colspan="10" style="text-align:center;padding:20px;color:var(--text3)">Sin cheques en Caja 1</td></tr>';
+    : '<tr><td colspan="8" style="text-align:center;padding:20px;color:var(--text3)">Sin cheques en Caja 1</td></tr>';
 
   document.getElementById('cart-body-2').innerHTML = s2.length
     ? s2.map(makeRow).join('')
-    : '<tr><td colspan="10" style="text-align:center;padding:20px;color:var(--text3)">Sin cheques en Caja 2</td></tr>';
+    : '<tr><td colspan="8" style="text-align:center;padding:20px;color:var(--text3)">Sin cheques en Caja 2</td></tr>';
 }
 
 function renderVencimientos() {
