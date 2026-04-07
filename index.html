@@ -170,7 +170,7 @@ function saveCfg() {
     <nav class="nav">
       <button class="nav-item active" onclick="goTo('cartera',this)"><span class="icon">💼</span> En cartera</button>
       <button class="nav-item" onclick="goTo('vencimientos',this)"><span class="icon">📅</span> Vencimientos</button>
-      <button class="nav-item" onclick="goTo('nuevo',this)"><span class="icon">＋</span> Nuevo cheque</button>
+      <button class="nav-item" onclick="goTo('nuevo',this)"><span class="icon">＋</span> Nuevo recibo</button>
       <button class="nav-item" onclick="goTo('historial',this)"><span class="icon">📋</span> Historial</button>
       <button class="nav-item" onclick="goTo('buscar',this)"><span class="icon">🔍</span> Buscar</button>
       <button class="nav-item" onclick="goTo('resumen',this)"><span class="icon">📊</span> Resumen</button>
@@ -178,6 +178,7 @@ function saveCfg() {
     </nav>
     <div class="sync-area">
       <div class="sync-pill"><div class="sync-dot loading" id="sync-dot"></div><span id="sync-txt">Conectando...</span></div>
+      <button class="btn btn-sm" onclick="refrescar()" style="width:100%;margin-top:6px;font-size:11px">↻ Actualizar</button>
     </div>
   </div>
 
@@ -221,29 +222,47 @@ function saveCfg() {
 
     <!-- NUEVO -->
     <div class="page" id="pg-nuevo">
-      <div class="page-title">Nuevo cheque</div>
-      <div class="page-sub">Cargá un cheque recibido</div>
+      <div class="page-title">Nuevo recibo</div>
+      <div class="page-sub">Cargá todos los cheques de un recibo de una vez</div>
+      <!-- CABECERA DEL RECIBO -->
       <div class="card">
+        <div class="card-title">Datos del recibo</div>
         <div class="form-grid">
+          <div class="form-group"><label>N° Recibo</label><input type="text" id="np-recibo" placeholder="6802"></div>
+          <div class="form-group"><label>Fecha recibo</label><input type="date" id="np-fecha-rec"></div>
           <div class="form-group"><label>Cliente</label><select id="np-cliente"><option value="">— Seleccionar —</option></select></div>
-          <div class="form-group"><label>Importe ($)</label><input type="number" id="np-importe" min="0" step="0.01" placeholder="0.00"></div>
+          <div class="form-group"><label>Caja</label><select id="np-caja"><option value="caja1">Caja 1</option><option value="caja2">Caja 2</option></select></div>
+        </div>
+      </div>
+      <!-- AGREGAR CHEQUE AL RECIBO -->
+      <div class="card">
+        <div class="card-title">Agregar cheque al recibo</div>
+        <div class="form-grid">
           <div class="form-group"><label>Banco</label><select id="np-banco"><option value="">— Seleccionar —</option></select></div>
           <div class="form-group"><label>N° Cheque</label><input type="text" id="np-numero" placeholder="0000"></div>
-          <div class="form-group"><label>Fecha recibo</label><input type="date" id="np-fecha-rec"></div>
+          <div class="form-group"><label>Importe ($)</label><input type="number" id="np-importe" min="0" step="0.01" placeholder="0.00"></div>
           <div class="form-group"><label>Fecha cobro</label><input type="date" id="np-fecha-cob"></div>
           <div class="form-group"><label>Plaza</label><input type="text" id="np-plaza" placeholder="Código plaza"></div>
           <div class="form-group"><label>CUIT</label><input type="text" id="np-cuit" placeholder="20-00000000-0"></div>
-          <div class="form-group"><label>N° Recibo</label><input type="text" id="np-recibo"></div>
-          <div class="form-group"><label>Caja</label><select id="np-caja"><option value="caja1">Caja 1</option><option value="caja2">Caja 2</option></select></div>
         </div>
         <div class="btn-row">
-          <button class="btn btn-primary" onclick="guardarNuevo()">Guardar cheque</button>
-          <button class="btn" onclick="limpiarNuevo()">Limpiar</button>
+          <button class="btn btn-primary" onclick="agregarChequeAlRecibo()">＋ Agregar cheque</button>
+          <button class="btn" onclick="limpiarChequeParcial()">Limpiar campos</button>
         </div>
       </div>
-      <div class="card" id="ultimo-cheque" style="display:none">
-        <div class="card-title">Último cheque guardado</div>
-        <div id="ultimo-cheque-body"></div>
+      <!-- CHEQUES EN COLA -->
+      <div class="card" id="recibo-cola-card" style="display:none">
+        <div class="card-title" id="recibo-cola-title">Cheques pendientes de guardar</div>
+        <div class="tbl-wrap">
+          <table>
+            <thead><tr><th>Banco</th><th>N°</th><th>Importe</th><th>F.Cobro</th><th>Plaza</th><th>CUIT</th><th></th></tr></thead>
+            <tbody id="recibo-cola-body"></tbody>
+          </table>
+        </div>
+        <div class="btn-row" style="margin-top:14px">
+          <button class="btn btn-primary" onclick="guardarRecibo()" id="btn-guardar-recibo">💾 Guardar recibo completo</button>
+          <button class="btn btn-danger" onclick="descartarRecibo()">✕ Descartar todo</button>
+        </div>
       </div>
     </div>
 
@@ -399,7 +418,7 @@ async function saveCloud(isNew) {
 function setSyncState(s,t) { document.getElementById('sync-dot').className='sync-dot '+s; document.getElementById('sync-txt').textContent=t; }
 
 // ── Helpers ─────────────────────────────────────────────────────
-const fmtM = n => n ? '$'+Math.round(n).toLocaleString('es-AR') : '-';
+const fmtM = n => { if(!n && n!==0) return '-'; return n%1!==0 ? '$'+n.toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2}) : '$'+Math.round(n).toLocaleString('es-AR'); };
 const fmtD = s => { if(!s||!s.trim()) return '-'; try{ const d=new Date(s+'T12:00:00'); return isNaN(d)?s:d.toLocaleDateString('es-AR',{day:'2-digit',month:'2-digit',year:'2-digit'}); }catch{return s;} };
 const today = () => new Date().toISOString().split('T')[0];
 const diasHasta = s => {
@@ -519,7 +538,9 @@ async function aplicarRapido(id) {
   toast('Cheque #'+id+' marcado como aplicado');
 }
 
-// ── NUEVO CHEQUE ────────────────────────────────────────────────
+// ── NUEVO RECIBO ─────────────────────────────────────────────────
+let COLA_CHEQUES = []; // cheques pendientes antes de guardar
+
 function initNuevo() {
   document.getElementById('np-fecha-rec').value=today();
   const cli=document.getElementById('np-cliente');
@@ -527,9 +548,108 @@ function initNuevo() {
   const ban=document.getElementById('np-banco');
   if(ban.children.length<2) BANCOS_BD.forEach(b=>{const o=document.createElement('option');o.value=b;o.textContent=b;ban.appendChild(o);});
   initAllCombos();
+  renderCola();
+}
+
+function agregarChequeAlRecibo() {
+  const banco = document.getElementById('np-banco').value;
+  const numero = document.getElementById('np-numero').value;
+  const importe = parseFloat(document.getElementById('np-importe').value) || 0;
+  const fecha_cob = document.getElementById('np-fecha-cob').value;
+  if(!banco || !importe || !fecha_cob) { toast('Completá banco, importe y fecha de cobro','warn'); return; }
+  COLA_CHEQUES.push({
+    banco, numero,
+    importe,
+    fecha_cobro: fecha_cob,
+    plaza: document.getElementById('np-plaza').value,
+    cuit: document.getElementById('np-cuit').value,
+    _tmpId: Date.now() + Math.random()
+  });
+  limpiarChequeParcial();
+  renderCola();
+  toast('Cheque agregado al recibo');
+}
+
+function renderCola() {
+  const card = document.getElementById('recibo-cola-card');
+  const body = document.getElementById('recibo-cola-body');
+  const title = document.getElementById('recibo-cola-title');
+  if(COLA_CHEQUES.length === 0) { card.style.display='none'; return; }
+  card.style.display='block';
+  const total = COLA_CHEQUES.reduce((a,c)=>a+c.importe,0);
+  title.textContent = `${COLA_CHEQUES.length} cheque${COLA_CHEQUES.length>1?'s':''} listos para guardar — Total: ${fmtM(total)}`;
+  body.innerHTML = COLA_CHEQUES.map((c,i) => `<tr>
+    <td>${c.banco}</td>
+    <td style="font-family:'DM Mono',monospace;font-size:11px">${c.numero||'-'}</td>
+    <td style="font-weight:600">${fmtM(c.importe)}</td>
+    <td>${fmtD(c.fecha_cobro)}</td>
+    <td style="font-size:11px">${c.plaza||'-'}</td>
+    <td style="font-size:11px">${c.cuit||'-'}</td>
+    <td><button class="btn btn-sm btn-danger" onclick="quitarDeCola(${i})">✕</button></td>
+  </tr>`).join('');
+}
+
+function quitarDeCola(idx) {
+  COLA_CHEQUES.splice(idx, 1);
+  renderCola();
+}
+
+async function guardarRecibo() {
+  if(COLA_CHEQUES.length === 0) { toast('No hay cheques para guardar','warn'); return; }
+  const cliente = document.getElementById('np-cliente').value;
+  const recibo = document.getElementById('np-recibo').value;
+  const fecha_rec = document.getElementById('np-fecha-rec').value;
+  const caja = document.getElementById('np-caja').value;
+  if(!cliente) { toast('Seleccioná un cliente para el recibo','warn'); return; }
+  
+  const nuevos = COLA_CHEQUES.map(c => ({
+    id: STATE.nextId++,
+    fecha_recibo: fecha_rec,
+    importe: c.importe,
+    fecha_cobro: c.fecha_cobro,
+    banco: c.banco,
+    plaza: c.plaza,
+    numero: c.numero,
+    cuit: c.cuit,
+    recibo: recibo,
+    cliente: cliente,
+    estado: 'En cartera',
+    destino: '',
+    fecha_aplicado: '',
+    caja: caja
+  }));
+
+  STATE.cheques.push(...nuevos);
+  await saveCloud();
+  
+  const total = nuevos.reduce((a,c)=>a+c.importe,0);
+  toast(`✓ Recibo ${recibo||''} guardado — ${nuevos.length} cheques, ${fmtM(total)}`);
+  COLA_CHEQUES = [];
+  renderCola();
+}
+
+function descartarRecibo() {
+  if(COLA_CHEQUES.length>0 && !confirm('¿Descartás los '+COLA_CHEQUES.length+' cheques sin guardar?')) return;
+  COLA_CHEQUES = [];
+  renderCola();
+}
+
+function limpiarChequeParcial() {
+  ['np-banco','np-numero','np-plaza','np-cuit'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
+  document.getElementById('np-importe').value='';
+  document.getElementById('np-fecha-cob').value='';
+}
+
+function limpiarNuevo() {
+  limpiarChequeParcial();
+  ['np-cliente','np-recibo'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
+  document.getElementById('np-fecha-rec').value=today();
+  COLA_CHEQUES = [];
+  renderCola();
 }
 
 async function guardarNuevo() {
+  // Legacy single-cheque save (kept for compatibility)
   const cliente=document.getElementById('np-cliente').value;
   const importe=parseFloat(document.getElementById('np-importe').value)||0;
   const banco=document.getElementById('np-banco').value;
@@ -547,23 +667,8 @@ async function guardarNuevo() {
   };
   STATE.cheques.push(cheque);
   await saveCloud();
-  document.getElementById('ultimo-cheque').style.display='block';
-  document.getElementById('ultimo-cheque-body').innerHTML=`<table><tbody>
-    <tr><td style="color:var(--text2);padding:5px 8px;width:130px">Cliente</td><td style="padding:5px 8px;font-weight:500">${cheque.cliente}</td></tr>
-    <tr><td style="color:var(--text2);padding:5px 8px">Importe</td><td style="padding:5px 8px;font-weight:600;color:var(--success)">${fmtM(cheque.importe)}</td></tr>
-    <tr><td style="color:var(--text2);padding:5px 8px">Banco</td><td style="padding:5px 8px">${cheque.banco} — N° ${cheque.numero}</td></tr>
-    <tr><td style="color:var(--text2);padding:5px 8px">Fecha cobro</td><td style="padding:5px 8px">${fmtD(cheque.fecha_cobro)}</td></tr>
-    <tr><td style="color:var(--text2);padding:5px 8px">Días hasta cobro</td><td style="padding:5px 8px">${diasBadge(diasHasta(cheque.fecha_cobro))}</td></tr>
-  </tbody></table>`;
   toast('Cheque guardado correctamente');
   limpiarNuevo();
-}
-
-function limpiarNuevo() {
-  ['np-cliente','np-banco','np-numero','np-plaza','np-cuit','np-recibo'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
-  ['np-importe'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
-  document.getElementById('np-fecha-cob').value='';
-  document.getElementById('np-fecha-rec').value=today();
 }
 
 // ── HISTORIAL ───────────────────────────────────────────────────
@@ -893,11 +998,24 @@ function initAllCombos() {
 }
 
 async function initApp() { await loadCloud(); renderCartera(); }
+async function refrescar() {
+  await loadCloud();
+  // Re-render current active page
+  const activePage = document.querySelector('.page.active');
+  if(activePage) {
+    const id = activePage.id.replace('pg-','');
+    const r={cartera:renderCartera,vencimientos:renderVencimientos,historial:renderHistorial,buscar:()=>{},resumen:renderResumen,nuevo:()=>{}};
+    if(r[id]) r[id]();
+  }
+  toast('Datos actualizados');
+}
 async function boot() {
   loadCfg();
   if(!CFG.apiKey) { document.getElementById('cfg-modal').style.display='flex'; }
   else { document.getElementById('cfg-modal').style.display='none'; await initApp(); }
   document.getElementById('np-fecha-rec').value=today();
+  // Auto-refresh each 90s
+  setInterval(async ()=>{ await loadCloud(); const activePage=document.querySelector('.page.active'); if(activePage){const id=activePage.id.replace('pg-','');const r={cartera:renderCartera,vencimientos:renderVencimientos,historial:renderHistorial,resumen:renderResumen};if(r[id])r[id]();} }, 90000);
 }
 boot();
 </script>
