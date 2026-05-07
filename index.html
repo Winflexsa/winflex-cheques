@@ -415,16 +415,15 @@ function saveCfg() {
           </div>
           <div class="tbl-wrap"><table id="pg-fac-table">
             <thead><tr>
-              <th style="width:140px">N° Factura</th>
-              <th style="width:130px">Fecha</th>
-              <th style="width:140px;text-align:right">Importe total</th>
-              <th style="width:140px;text-align:right">A pagar ahora</th>
+              <th style="width:160px">N° Factura</th>
+              <th style="width:140px">Fecha</th>
+              <th style="width:160px;text-align:right">Importe</th>
               <th></th>
             </tr></thead>
             <tbody id="pg-fac-body"></tbody>
           </table></div>
           <div id="pg-fac-empty" style="text-align:center;padding:20px;color:var(--text3);font-size:13px">Sin facturas — Click "+ Agregar factura"</div>
-          <div style="text-align:right;margin-top:12px;font-weight:600;font-size:14px">Total facturas a pagar: <span id="pg-fac-total" style="color:var(--accent)">$ 0</span></div>
+          <div style="text-align:right;margin-top:12px;font-weight:600;font-size:14px">Total facturas: <span id="pg-fac-total" style="color:var(--accent)">$ 0</span></div>
         </div>
 
         <!-- Medios de pago -->
@@ -708,7 +707,7 @@ async function saveCloud(isNew) {
       }
     }
     setSyncState('ok','Guardado ✓ ('+sizeKB.toFixed(1)+' KB)');
-    if (sizeKB > 90) toast('⚠ Bin al '+sizeKB.toFixed(1)+'/100 KB — avisar a Mati','warn');
+    if (sizeKB > 900) toast('⚠ Bin al '+sizeKB.toFixed(1)+'/1024 KB — avisar a Mati','warn');
   } catch(e) {
     setSyncState('err','Error: '+e.message);
     console.error('[saveCloud]', e);
@@ -1328,7 +1327,7 @@ function pagosShowTab(tab) {
 
 // ── Facturas ────────────────────────────────────────────────────
 function pagosFacturaAdd() {
-  PAGOS_FORM.facturas.push({ numero: '', fecha: today(), total: '', a_pagar: '' });
+  PAGOS_FORM.facturas.push({ numero: '', fecha: today(), total: '' });
   pagosFacturaRender();
 }
 function pagosFacturaRemove(idx) {
@@ -1339,11 +1338,6 @@ function pagosFacturaRemove(idx) {
 function pagosFacturaUpdate(idx, campo, valor) {
   if (!PAGOS_FORM.facturas[idx]) return;
   PAGOS_FORM.facturas[idx][campo] = valor;
-  // Si cambia el total y a_pagar está vacío, autocompletar
-  if (campo === 'total' && !PAGOS_FORM.facturas[idx].a_pagar) {
-    PAGOS_FORM.facturas[idx].a_pagar = valor;
-    pagosFacturaRender();
-  }
   pagosResumen();
 }
 function pagosFacturaRender() {
@@ -1361,7 +1355,6 @@ function pagosFacturaRender() {
     <td><input type="text" value="${f.numero||''}" oninput="pagosFacturaUpdate(${i},'numero',this.value)" style="${styleInput};font-family:'DM Mono',monospace"></td>
     <td><input type="date" value="${f.fecha||''}" oninput="pagosFacturaUpdate(${i},'fecha',this.value)" style="${styleInput}"></td>
     <td><input type="number" min="0" step="0.01" value="${f.total||''}" oninput="pagosFacturaUpdate(${i},'total',this.value)" style="${styleInput};text-align:right"></td>
-    <td><input type="number" min="0" step="0.01" value="${f.a_pagar||''}" oninput="pagosFacturaUpdate(${i},'a_pagar',this.value)" style="${styleInput};text-align:right"></td>
     <td><button class="btn btn-sm btn-danger" onclick="pagosFacturaRemove(${i})" title="Eliminar">✕</button></td>
   </tr>`).join('');
 }
@@ -1576,7 +1569,7 @@ function pagosPropioRender() {
 
 // ── Resumen ─────────────────────────────────────────────────────
 function pagosResumen() {
-  const totalFac = PAGOS_FORM.facturas.reduce((a,f) => a + (parseFloat(f.a_pagar)||0), 0);
+  const totalFac = PAGOS_FORM.facturas.reduce((a,f) => a + (parseFloat(f.total)||0), 0);
   const totalFis = PAGOS_FORM.chequesFisicos.reduce((a,c) => a + c.importe, 0);
   const totalEch = PAGOS_FORM.echeqs.reduce((a,e) => a + e.importe, 0);
   const totalProp = PAGOS_FORM.propios.reduce((a,p) => a + (parseFloat(p.importe)||0), 0);
@@ -1606,13 +1599,13 @@ async function pagosGenerarOP() {
   for (let i = 0; i < PAGOS_FORM.facturas.length; i++) {
     const f = PAGOS_FORM.facturas[i];
     if (!f.numero) { toast('Falta el número en factura ' + (i+1), 'warn'); return; }
-    if (!parseFloat(f.a_pagar)) { toast('Falta el importe a pagar en factura ' + (i+1), 'warn'); return; }
+    if (!parseFloat(f.total)) { toast('Falta el importe en factura ' + (i+1), 'warn'); return; }
   }
   const totalMedios = PAGOS_FORM.chequesFisicos.length + PAGOS_FORM.echeqs.length + PAGOS_FORM.propios.length;
   if (totalMedios === 0) { toast('Falta al menos un medio de pago', 'warn'); return; }
 
   // Calcular totales
-  const totalFac = PAGOS_FORM.facturas.reduce((a,f) => a + parseFloat(f.a_pagar||0), 0);
+  const totalFac = PAGOS_FORM.facturas.reduce((a,f) => a + parseFloat(f.total||0), 0);
   const totalFis = PAGOS_FORM.chequesFisicos.reduce((a,c) => a + c.importe, 0);
   const totalEch = PAGOS_FORM.echeqs.reduce((a,e) => a + e.importe, 0);
   const totalProp = PAGOS_FORM.propios.reduce((a,p) => a + (parseFloat(p.importe)||0), 0);
@@ -1640,7 +1633,7 @@ async function pagosGenerarOP() {
     proveedor: proveedor,
     facturas: PAGOS_FORM.facturas.map(f => ({
       numero: f.numero, fecha: f.fecha,
-      total: parseFloat(f.total)||0, a_pagar: parseFloat(f.a_pagar)||0
+      total: parseFloat(f.total)||0
     })),
     cheques_fisicos: PAGOS_FORM.chequesFisicos.map(c => ({
       id: c.id, numero: c.numero, banco: c.banco, importe: c.importe,
@@ -1725,9 +1718,9 @@ function pagosMostrarOPView(op) {
 
   // Facturas
   html += '<div class="seccion">FACTURAS A CANCELAR</div>';
-  html += '<table><thead><tr><th>N° Factura</th><th>Fecha</th><th style="text-align:right">Importe total</th><th style="text-align:right">A pagar</th></tr></thead><tbody>';
+  html += '<table><thead><tr><th>N° Factura</th><th>Fecha</th><th style="text-align:right">Importe</th></tr></thead><tbody>';
   op.facturas.forEach(f => {
-    html += `<tr><td>${f.numero||''}</td><td>${f.fecha?fmtD(f.fecha):''}</td><td class="num">${fmtM(f.total)}</td><td class="num">${fmtM(f.a_pagar)}</td></tr>`;
+    html += `<tr><td>${f.numero||''}</td><td>${f.fecha?fmtD(f.fecha):''}</td><td class="num">${fmtM(f.total)}</td></tr>`;
   });
   html += '</tbody></table>';
 
@@ -2310,7 +2303,7 @@ boot();
 
 <!-- Modal: Selector de cheques físicos -->
 <div id="pg-sel-fis-modal" class="modal-bg">
-  <div class="modal" style="max-width:900px">
+  <div class="modal-box" style="max-width:900px;width:900px">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
       <h3 style="margin:0">Seleccionar cheques de cartera</h3>
       <button class="btn btn-sm" onclick="document.getElementById('pg-sel-fis-modal').style.display='none'">✕</button>
@@ -2339,7 +2332,7 @@ boot();
 
 <!-- Modal: Selector de echeqs -->
 <div id="pg-sel-ech-modal" class="modal-bg">
-  <div class="modal" style="max-width:900px">
+  <div class="modal-box" style="max-width:900px;width:900px">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
       <h3 style="margin:0">Seleccionar echeqs disponibles</h3>
       <button class="btn btn-sm" onclick="document.getElementById('pg-sel-ech-modal').style.display='none'">✕</button>
@@ -2368,7 +2361,7 @@ boot();
 
 <!-- Modal: Vista de OP imprimible -->
 <div id="pg-op-view-modal" class="modal-bg">
-  <div class="modal" style="max-width:900px;background:white">
+  <div class="modal-box" style="max-width:900px;width:900px;background:white">
     <div class="no-print" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid var(--border)">
       <h3 style="margin:0">Orden de Pago</h3>
       <div style="display:flex;gap:8px">
