@@ -61,6 +61,7 @@ tbody tr:hover td{background:var(--surface2)}
 .badge-vencido{background:#fee2e2;color:#991b1b}
 .badge-devuelto{background:#f3f4f6;color:#374151}
 .badge-rechazado{background:#fed7aa;color:#9a3412}
+.badge-anulada{background:#fee2e2;color:#7f1d1d;text-decoration:line-through}
 .badge-vence-hoy{background:var(--danger-light);color:var(--danger)}
 .badge-vence-pronto{background:var(--warn-light);color:var(--warn)}
 .form-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px}
@@ -1798,12 +1799,18 @@ function pagosLimpiar() {
 }
 
 // ── Vista imprimible de OP ──────────────────────────────────────
+let _opAbierta = null; // referencia a la OP actualmente abierta en el modal
+
 function pagosMostrarOPView(op) {
+  _opAbierta = op;
   const c = document.getElementById('pg-op-view-content');
   if (!c) return;
   let html = '<div class="op-print">';
   html += '<h1>WINFLEX S.A.</h1>';
   html += '<div class="op-num">ORDEN DE PAGO N° ' + op.id + '</div>';
+  if (op.estado === 'anulada') {
+    html += '<div style="text-align:center;color:#dc2626;font-size:22px;font-weight:700;border:3px solid #dc2626;padding:6px;margin:8px 0;letter-spacing:3px">ANULADA' + (op.fecha_anulacion ? ' — ' + fmtD(op.fecha_anulacion) : '') + '</div>';
+  }
   html += '<div class="info-row"><div><strong>Proveedor:</strong> ' + (op.proveedor||'') + '</div><div><strong>Fecha:</strong> ' + (op.fecha?fmtD(op.fecha):'') + '</div></div>';
   if (op.tipo) html += '<div class="info-row"><div style="font-size:11px;color:#555">Tipo de OP: ' + (op.tipo === '2' || op.tipo === 2 ? 'Tipo 2 (Caja 2)' : 'Tipo 1 (Caja 1 + Echeqs)') + '</div></div>';
 
@@ -1853,17 +1860,95 @@ function pagosMostrarOPView(op) {
   }
   html += '</div>';
 
-  // Firmas
-  html += '<div class="firmas"><div class="box"><div class="line">Recibí conforme<br>(Proveedor)</div></div><div class="box"><div class="line">Por Winflex S.A.</div></div></div>';
+  // Firmas (solo si NO está anulada)
+  if (op.estado !== 'anulada') {
+    html += '<div class="firmas"><div class="box"><div class="line">Recibí conforme<br>(Proveedor)</div></div><div class="box"><div class="line">Por Winflex S.A.</div></div></div>';
+  }
   html += '</div>';
 
   c.innerHTML = html;
+  // Mostrar/ocultar botones según estado
+  const btnAnular = document.getElementById('pg-op-btn-anular');
+  const btnEliminar = document.getElementById('pg-op-btn-eliminar');
+  if (btnAnular) btnAnular.style.display = (op.estado === 'anulada') ? 'none' : '';
+  if (btnEliminar) btnEliminar.style.display = (op.estado === 'anulada') ? '' : 'none';
   document.getElementById('pg-op-view-modal').style.display = 'flex';
 }
 
 function pagosOpenOPView(opId) {
   const op = (STATE.ops || []).find(o => o.id === opId);
   if (op) pagosMostrarOPView(op);
+}
+
+async function pagosAnularOPAbierta() {
+  if (!_opAbierta) return;
+  const op = STATE.ops.find(o => o.id === _opAbierta.id);
+  if (!op) return;
+  if (op.estado === 'anulada') { toast('La OP ya está anulada', 'warn'); return; }
+
+  // Contar cuántos se van a revertir realmente
+  let chRevert = 0, eqRevert = 0;
+  (op.cheques_fisicos||[]).forEach(cInOp => {
+    const c = STATE.cheques.find(x => x.id === cInOp.id);
+    if (c && c.estado === 'Aplicado' && c.destino === op.proveedor) chRevert++;
+  });
+  (op.echeqs||[]).forEach(eInOp => {
+    const e = (STATE.echeqs||[]).find(x => x.id === eInOp.id);
+    if (e && e.estado === 'usado' && e.op_id === op.id) eqRevert++;
+  });
+
+  const msg = '¿Anular ' + op.id + '?\n\n' +
+    chRevert + ' cheque(s) físico(s) vuelven a cartera\n' +
+    eqRevert + ' echeq(s) vuelven a disponibles\n\n' +
+    'La OP queda como ANULADA en el historial.';
+  if (!confirm(msg)) return;
+
+  // Revertir cheques físicos
+  (op.cheques_fisicos||[]).forEach(cInOp => {
+    const c = STATE.cheques.find(x => x.id === cInOp.id);
+    if (c && c.estado === 'Aplicado' && c.destino === op.proveedor) {
+      c.estado = 'En cartera';
+      c.destino = '';
+      c.fecha_aplicado = '';
+    }
+  });
+  // Revertir echeqs
+  (op.echeqs||[]).forEach(eInOp => {
+    const e = (STATE.echeqs||[]).find(x => x.id === eInOp.id);
+    if (e && e.estado === 'usado' && e.op_id === op.id) {
+      e.estado = 'disponible';
+      e.destino = '';
+      e.op_id = null;
+    }
+  });
+
+  // Marcar anulada
+  op.estado = 'anulada';
+  op.fecha_anulacion = today();
+
+  await saveCloud();
+  // Refrescar vista actual y todo
+  pagosMostrarOPView(op);
+  renderPagosHistorial();
+  reRenderActive();
+  toast(op.id + ' anulada — ' + chRevert + ' cheques + ' + eqRevert + ' echeqs revertidos', 'ok');
+}
+
+async function pagosEliminarOPAbierta() {
+  if (!_opAbierta) return;
+  const op = STATE.ops.find(o => o.id === _opAbierta.id);
+  if (!op) return;
+  if (op.estado !== 'anulada') {
+    toast('Solo se pueden eliminar OPs anuladas. Primero anulala.', 'warn');
+    return;
+  }
+  if (!confirm('¿Eliminar definitivamente ' + op.id + '?\n\nEsta acción no se puede deshacer.')) return;
+  STATE.ops = STATE.ops.filter(o => o.id !== op.id);
+  await saveCloud();
+  document.getElementById('pg-op-view-modal').style.display = 'none';
+  _opAbierta = null;
+  renderPagosHistorial();
+  toast(op.id + ' eliminada', 'ok');
 }
 
 // ── Historial de OPs ────────────────────────────────────────────
@@ -1888,14 +1973,18 @@ function renderPagosHistorial() {
   if (empty) empty.style.display = 'none';
   tbody.innerHTML = lista.map(o => {
     const medios = (o.cheques_fisicos?.length||0) + (o.echeqs?.length||0) + (o.propios?.length||0);
-    return `<tr style="cursor:pointer" onclick="pagosOpenOPView('${o.id}')">
-      <td><strong style="color:var(--accent)">${o.id}</strong></td>
+    const anulada = o.estado === 'anulada';
+    const rowStyle = anulada ? 'cursor:pointer;color:var(--text3);background:#fafafa' : 'cursor:pointer';
+    const idStyle = anulada ? 'color:var(--text3);text-decoration:line-through' : 'color:var(--accent)';
+    const badgeCls = anulada ? 'badge-anulada' : 'badge-aplicado';
+    return `<tr style="${rowStyle}" onclick="pagosOpenOPView('${o.id}')">
+      <td><strong style="${idStyle}">${o.id}</strong></td>
       <td>${o.fecha?fmtD(o.fecha):''}</td>
       <td>${o.proveedor||''}</td>
       <td style="text-align:right;font-weight:600">${fmtM(o.total_pagado)}</td>
       <td>${o.facturas?.length||0}</td>
       <td>${medios}</td>
-      <td><span class="badge badge-aplicado">${o.estado||'generada'}</span></td>
+      <td><span class="badge ${badgeCls}">${o.estado||'generada'}</span></td>
       <td><button class="btn btn-sm" onclick="event.stopPropagation();pagosOpenOPView('${o.id}')">📄</button></td>
     </tr>`;
   }).join('');
@@ -2458,8 +2547,10 @@ boot();
   <div class="modal-box" style="max-width:900px;width:900px;background:white">
     <div class="no-print" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid var(--border)">
       <h3 style="margin:0">Orden de Pago</h3>
-      <div style="display:flex;gap:8px">
+      <div style="display:flex;gap:8px" id="pg-op-view-actions">
         <button class="btn btn-primary" onclick="window.print()">🖨️ Imprimir</button>
+        <button class="btn btn-danger" id="pg-op-btn-anular" onclick="pagosAnularOPAbierta()" style="display:none">Anular OP</button>
+        <button class="btn btn-danger" id="pg-op-btn-eliminar" onclick="pagosEliminarOPAbierta()" style="display:none">🗑 Eliminar</button>
         <button class="btn" onclick="document.getElementById('pg-op-view-modal').style.display='none'">Cerrar</button>
       </div>
     </div>
