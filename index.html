@@ -197,7 +197,7 @@ function saveCfg() {
         <div id="cart1-total" style="font-size:12px;color:var(--text2)"></div>
       </div>
       <div class="card" style="margin-bottom:20px"><div class="tbl-wrap"><table>
-        <thead><tr><th>F. Recibo</th><th>Importe</th><th>F. Cobro</th><th>Días</th><th>Banco</th><th>N°</th><th>Cliente</th><th>CUIT</th><th></th></tr></thead>
+        <thead><tr><th>F. Recibo</th><th>Importe</th><th>F. Cobro</th><th title="Días hasta vencer (cobro + 30 días tolerancia)">Días vence</th><th>Banco</th><th>N°</th><th>Cliente</th><th>CUIT</th><th></th></tr></thead>
         <tbody id="cart-body-1"></tbody>
       </table></div></div>
 
@@ -206,7 +206,7 @@ function saveCfg() {
         <div id="cart2-total" style="font-size:12px;color:var(--text2)"></div>
       </div>
       <div class="card"><div class="tbl-wrap"><table>
-        <thead><tr><th>Fecha recibo</th><th>Importe</th><th>Fecha cobro</th><th>Días</th><th>Banco</th><th>N°</th><th>Cliente</th><th>CUIT</th><th></th></tr></thead>
+        <thead><tr><th>Fecha recibo</th><th>Importe</th><th>Fecha cobro</th><th title="Días hasta vencer (cobro + 30 días tolerancia)">Días vence</th><th>Banco</th><th>N°</th><th>Cliente</th><th>CUIT</th><th></th></tr></thead>
         <tbody id="cart-body-2"></tbody>
       </table></div></div>
     </div>
@@ -218,7 +218,7 @@ function saveCfg() {
       <div class="metrics" id="venc-metrics"></div>
       <div id="venc-alertas"></div>
       <div class="card"><div class="tbl-wrap"><table>
-        <thead><tr><th>Caja</th><th>Fecha cobro</th><th>Días</th><th>Importe</th><th>Banco</th><th>N°</th><th>Cliente</th><th></th></tr></thead>
+        <thead><tr><th>Caja</th><th>Fecha cobro</th><th title="Días hasta vencer (cobro + 30 días tolerancia)">Días vence</th><th>Importe</th><th>Banco</th><th>N°</th><th>Cliente</th><th></th></tr></thead>
         <tbody id="venc-body"></tbody>
       </table></div></div>
     </div>
@@ -433,9 +433,24 @@ async function saveCloud(isNew) {
 
 function setSyncState(s,t){const dot=document.getElementById('sync-dot');const txt=document.getElementById('sync-txt');dot.className='sync-dot '+(s==='idle'?'':s);txt.textContent=t;}
 
+// Re-renderiza la página activa Y las que pueden estar en caché (cartera, vencimientos, historial, resumen)
+function reRenderActive() {
+  try {
+    if (document.getElementById('cart-metrics')) renderCartera();
+    if (document.getElementById('venc-body')) renderVencimientos();
+    if (document.getElementById('hist-body')) renderHistorial();
+    if (document.getElementById('res-metrics') && typeof Chart !== 'undefined') renderResumen();
+  } catch(e) { console.error('[reRenderActive]', e); }
+}
+
 // ── Helpers ─────────────────────────────────────────────────────
 const fmtM = n => { if(!n && n!==0) return '-'; return n%1!==0 ? '$'+n.toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2}) : '$'+Math.round(n).toLocaleString('es-AR'); };
-const fmtD = s => { if(!s||!s.trim()) return '-'; try{ const d=new Date(s+'T12:00:00'); return isNaN(d)?s:d.toLocaleDateString('es-AR',{day:'2-digit',month:'2-digit',year:'2-digit'}); }catch{return s;} };
+const fmtD = s => {
+  if(!s||!s.trim()) return '-';
+  // Si no parece formato YYYY-MM-DD, mostrar guion
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s.trim())) return '-';
+  try{ const d=new Date(s+'T12:00:00'); return isNaN(d)?'-':d.toLocaleDateString('es-AR',{day:'2-digit',month:'2-digit',year:'2-digit'}); }catch{return '-';}
+};
 const today = () => new Date().toISOString().split('T')[0];
 const diasHasta = s => {
   if(!s||!s.trim()) return null;
@@ -550,7 +565,7 @@ async function aplicarRapido(id) {
   if(!c) return;
   c.estado='Aplicado'; c.fecha_aplicado=today();
   await saveCloud();
-  renderVencimientos();
+  reRenderActive();
   toast('Cheque #'+id+' marcado como aplicado');
 }
 
@@ -562,6 +577,45 @@ function initNuevo() {
   const ban=document.getElementById('np-banco');
   if(ban.children.length<2) BANCOS_BD.forEach(b=>{const o=document.createElement('option');o.value=b;o.textContent=b;ban.appendChild(o);});
   initAllCombos();
+}
+
+// ── Validaciones ────────────────────────────────────────────────
+function validarCheque(c) {
+  const errores = [];
+  // Importe positivo
+  if (!c.importe || c.importe <= 0) errores.push('El importe debe ser mayor a 0');
+  // Banco obligatorio
+  if (!c.banco || !c.banco.trim()) errores.push('Falta el banco');
+  // Cliente obligatorio (para los nuevos)
+  if (!c.cliente || !c.cliente.trim()) errores.push('Falta el cliente');
+  // Fecha cobro obligatoria
+  if (!c.fecha_cobro || !c.fecha_cobro.trim()) errores.push('Falta la fecha de cobro');
+  // CUIT: si hay, debe ser de 11 dígitos exactos
+  if (c.cuit && c.cuit.trim()) {
+    const soloDigitos = c.cuit.replace(/\D/g, '');
+    if (soloDigitos.length !== 11) errores.push('El CUIT debe tener 11 dígitos (tiene '+soloDigitos.length+')');
+  }
+  // Fecha cobro no puede ser anterior a fecha recibo
+  if (c.fecha_recibo && c.fecha_cobro && c.fecha_recibo > c.fecha_cobro) {
+    errores.push('La fecha de cobro es anterior a la fecha de recibo');
+  }
+  // Fecha aplicado no puede ser futuro
+  if (c.fecha_aplicado) {
+    const t = today();
+    if (c.fecha_aplicado > t) errores.push('La fecha de aplicado no puede ser futura (hoy es '+t+')');
+  }
+  // Año razonable: rechazar fechas con año mayor a hoy+5 (son typos)
+  const checkYear = (campo, val) => {
+    if (!val) return;
+    const y = parseInt(val.substring(0,4));
+    const yHoy = new Date().getFullYear();
+    if (y > yHoy + 5) errores.push(`${campo} tiene año ${y}, parece un typo (probablemente quisiste poner ${y-1})`);
+    if (y < 2020) errores.push(`${campo} tiene año ${y}, parece un typo`);
+  };
+  checkYear('Fecha cobro', c.fecha_cobro);
+  checkYear('Fecha recibo', c.fecha_recibo);
+  checkYear('Fecha aplicado', c.fecha_aplicado);
+  return errores;
 }
 
 async function guardarNuevo() {
@@ -580,6 +634,13 @@ async function guardarNuevo() {
     estado:'En cartera', destino:'', fecha_aplicado:'',
     caja:document.getElementById('np-caja').value
   };
+  // Validación profunda
+  const errores = validarCheque(cheque);
+  if (errores.length) {
+    STATE.nextId--; // devolver el ID que tomé
+    toast('No se guardó: '+errores[0], 'warn');
+    return;
+  }
   STATE.cheques.push(cheque);
   await saveCloud();
   document.getElementById('ultimo-cheque').style.display='block';
@@ -790,21 +851,40 @@ function cerrarEditar() { document.getElementById('edit-modal').style.display='n
 async function guardarEditar() {
   const c=STATE.cheques.find(x=>x.id===editingId);
   if(!c) return;
-  c.estado=document.getElementById('ed-estado').value;
-  c.destino=document.getElementById('ed-destino').value;
-  c.fecha_aplicado=document.getElementById('ed-fecha-aplic').value;
-  c.cliente=document.getElementById('ed-cliente').value;
-  c.banco=document.getElementById('ed-banco').value;
-  c.importe=parseFloat(document.getElementById('ed-importe').value)||c.importe;
-  c.numero=document.getElementById('ed-numero').value;
-  c.cuit=document.getElementById('ed-cuit').value;
-  c.fecha_recibo=document.getElementById('ed-fecha-rec').value;
-  c.fecha_cobro=document.getElementById('ed-fecha-cob').value;
-  c.plaza=document.getElementById('ed-plaza').value;
-  c.recibo=document.getElementById('ed-recibo').value;
+  // Construir el cheque modificado primero (sobre una copia) para validarlo
+  const draft = {...c,
+    estado: document.getElementById('ed-estado').value,
+    destino: document.getElementById('ed-destino').value,
+    fecha_aplicado: document.getElementById('ed-fecha-aplic').value,
+    cliente: document.getElementById('ed-cliente').value,
+    banco: document.getElementById('ed-banco').value,
+    importe: parseFloat(document.getElementById('ed-importe').value)||c.importe,
+    numero: document.getElementById('ed-numero').value,
+    cuit: document.getElementById('ed-cuit').value,
+    fecha_recibo: document.getElementById('ed-fecha-rec').value,
+    fecha_cobro: document.getElementById('ed-fecha-cob').value,
+    plaza: document.getElementById('ed-plaza').value,
+    recibo: document.getElementById('ed-recibo').value
+  };
+  const errores = validarCheque(draft);
+  if (errores.length) {
+    toast('No se guardó: '+errores[0], 'warn');
+    return;
+  }
+  // Si está aplicado, fecha_aplicado debe estar
+  if (draft.estado === 'Aplicado' && !draft.fecha_aplicado) {
+    draft.fecha_aplicado = today();
+  }
+  // Si vuelve a "En cartera", limpiar fecha_aplicado y destino
+  if (draft.estado === 'En cartera') {
+    draft.fecha_aplicado = '';
+    draft.destino = '';
+  }
+  // Aplicar cambios al cheque real
+  Object.assign(c, draft);
   await saveCloud();
   cerrarEditar();
-  renderCartera();
+  reRenderActive();
   toast('Cheque actualizado');
 }
 
@@ -834,7 +914,16 @@ function exportar(tipo) {
 }
 
 // ── Toast ────────────────────────────────────────────────────────
-function toast(msg,type='ok') { const t=document.getElementById('toast'); t.textContent=msg; t.className='toast '+type; t.classList.add('show'); setTimeout(()=>t.classList.remove('show'),3000); }
+function toast(msg,type='ok') {
+  const t=document.getElementById('toast');
+  t.textContent=msg;
+  t.className='toast '+type;
+  t.classList.add('show');
+  // Errores y warnings duran más para que se puedan leer
+  const dur = (type==='warn'||type==='err') ? 7000 : 3000;
+  clearTimeout(t._timer);
+  t._timer = setTimeout(()=>t.classList.remove('show'), dur);
+}
 
 // ── Init ─────────────────────────────────────────────────────────
 function setTabCaja(caja) {
@@ -936,62 +1025,24 @@ async function initApp() {
   await loadCloud();
   renderCartera(); renderVencimientos(); renderHistorial(); renderResumen();
 }
-// ── Manual Save & Load ─────────────────────────────────────────
+// ── Manual Save & Load (wrappers que delegan a loadCloud/saveCloud) ─────────
 async function guardarCambios() {
-  setSyncState('loading','Guardando...');
   document.getElementById('btn-guardar').disabled = true;
   try {
-    const payload = { c: _compact(STATE.cheques), n: STATE.nextId, v: 2 };
-    localStorage.setItem('wf_chq_local', JSON.stringify({cheques: STATE.cheques, nextId: STATE.nextId}));
-    const res = await fetch('https://api.jsonbin.io/v3/b/69c6b405aa77b81da9277f9b', {
-      method: 'PUT',
-      headers: {'Content-Type':'application/json','X-Master-Key':CFG.apiKey},
-      body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(15000)
-    });
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    setSyncState('ok','✓ Guardado');
-    toast('Datos guardados en la nube (' + STATE.cheques.filter(ch=>ch.id!==1).length + ' cheques)', 'ok');
-    setTimeout(()=>setSyncState('idle',''), 4000);
-  } catch(e) {
-    setSyncState('err','✗ Error: ' + e.message);
-    toast('Error al guardar: ' + e.message, 'warn');
-    setTimeout(()=>setSyncState('idle',''), 6000);
+    await saveCloud();
+    if (!_saving) {
+      toast('Datos guardados en la nube ('+STATE.cheques.length+' cheques)', 'ok');
+    }
   } finally {
     document.getElementById('btn-guardar').disabled = false;
   }
 }
 
 async function actualizarDesdeNube() {
-  const binId = '69c6b405aa77b81da9277f9b';
-  if (!binId) { toast('No hay datos en la nube todavía. Guardá primero desde otra PC.', 'warn'); return; }
-  setSyncState('loading','Actualizando...');
-  try {
-    const res = await fetch('https://api.jsonbin.io/v3/b/' + binId + '/latest', {
-      headers: {'X-Master-Key': CFG.apiKey},
-      signal: AbortSignal.timeout(12000)
-    });
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    const d = await res.json();
-    const data = d.record;
-    // Aceptar formato comprimido (v:2 con data.c) o legado (data.cheques)
-    if (data && (data.c || data.cheques)) {
-      STATE.cheques = data.v===2 ? _expand(data.c) : data.cheques;
-      STATE.nextId = data.n || data.nextId || STATE.nextId;
-      localStorage.setItem('wf_chq_local', JSON.stringify({cheques: STATE.cheques, nextId: STATE.nextId}));
-      renderCartera(); renderVencimientos(); renderHistorial(); renderResumen();
-      setSyncState('ok','✓ Actualizado');
-      toast('Datos actualizados desde la nube (' + STATE.cheques.filter(ch=>ch.id!==1).length + ' cheques)', 'ok');
-      setTimeout(()=>setSyncState('idle',''), 4000);
-    } else {
-      setSyncState('idle','');
-      toast('No se encontraron datos en la nube', 'warn');
-    }
-  } catch(e) {
-    setSyncState('err','✗ Error: ' + e.message);
-    console.error('[actualizarDesdeNube]', e);
-    toast('Error al actualizar: ' + e.message, 'warn');
-    setTimeout(()=>setSyncState('idle',''), 6000);
+  await loadCloud();
+  reRenderActive();
+  if (STATE.cheques && STATE.cheques.length) {
+    toast('Datos actualizados desde la nube ('+STATE.cheques.length+' cheques)', 'ok');
   }
 }
 
@@ -1002,9 +1053,9 @@ async function eliminar(id) {
   const info = `${ch.cliente||'sin cliente'} — $${ch.importe?.toLocaleString('es-AR')} — ${ch.banco} N°${ch.numero}`;
   if (!confirm(`¿Eliminar este cheque?\n\n${info}\n\nEsta acción no se puede deshacer.`)) return;
   STATE.cheques = STATE.cheques.filter(x => x.id !== id);
-  localStorage.setItem('wf_chq_local', JSON.stringify({cheques: STATE.cheques, nextId: STATE.nextId}));
-  renderCartera(); renderVencimientos(); renderHistorial(); renderResumen();
-  toast('Cheque eliminado. Guardá para sincronizar.', 'warn');
+  await saveCloud();
+  reRenderActive();
+  toast('Cheque eliminado y sincronizado', 'ok');
 }
 
 async function boot() {
@@ -1015,14 +1066,19 @@ async function boot() {
   // Auto-refresh cada 90s para sincronizar con cambios de otros usuarios
   setInterval(async () => {
     if (_saving) return; // no pisar guardado en curso
+    // No refrescar si hay un modal de edición abierto (el usuario está editando)
+    const editModal = document.getElementById('edit-modal');
+    if (editModal && editModal.style.display === 'flex') return;
+    // No refrescar si está en la página "Nuevo cheque" con datos cargados (para no perder lo que está escribiendo)
+    const nuevoActive = document.getElementById('pg-nuevo')?.classList.contains('active');
+    if (nuevoActive) {
+      const tieneEntradas = ['np-cliente','np-importe','np-banco','np-numero','np-fecha-cob','np-cuit','np-recibo']
+        .some(id => { const el=document.getElementById(id); return el && el.value && el.value.trim() !== ''; });
+      if (tieneEntradas) return;
+    }
     try {
       await loadCloud();
-      const activePage = document.querySelector('.page.active');
-      if (activePage) {
-        const id = activePage.id.replace('pg-','');
-        const r = {cartera:renderCartera, vencimientos:renderVencimientos, historial:renderHistorial, resumen:renderResumen};
-        if (r[id]) r[id]();
-      }
+      reRenderActive();
     } catch(e) { console.error('[auto-refresh]', e); }
   }, 90000);
 }
