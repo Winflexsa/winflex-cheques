@@ -99,11 +99,28 @@ tbody tr:hover td{background:var(--surface2)}
 .dias-verde{background:var(--success-light);color:var(--success)}
 @media(max-width:768px){.sidebar{width:100%;position:relative;height:auto}.main{margin-left:0;padding:14px}.card-grid{grid-template-columns:1fr}.form-grid{grid-template-columns:1fr}}
 @media print {
-  body { background: white; }
-  .sidebar, .topbar, .no-print, .nav-item, .modal-bg:not(#pg-op-view-modal) { display: none !important; }
-  .main { margin-left: 0 !important; padding: 0 !important; }
-  #pg-op-view-modal { position: static !important; background: white !important; display: block !important; }
-  #pg-op-view-modal .modal { box-shadow: none !important; max-width: 100% !important; padding: 0 !important; }
+  body * { visibility: hidden !important; }
+  #pg-op-view-modal, #pg-op-view-modal * { visibility: visible !important; }
+  #pg-op-view-modal {
+    position: absolute !important;
+    inset: 0 !important;
+    background: white !important;
+    display: block !important;
+    padding: 0 !important;
+    overflow: visible !important;
+    z-index: auto !important;
+  }
+  #pg-op-view-modal .modal-box {
+    box-shadow: none !important;
+    border: none !important;
+    border-radius: 0 !important;
+    max-width: 100% !important;
+    width: 100% !important;
+    padding: 20px !important;
+    max-height: none !important;
+    overflow: visible !important;
+  }
+  .no-print, .no-print * { display: none !important; visibility: hidden !important; }
   .op-print { font-family: 'Times New Roman', serif; font-size: 12px; color: #000; }
   .op-print h1 { font-size: 18px; margin: 0 0 6px 0; text-align: center; }
   .op-print .op-num { text-align: center; font-size: 14px; font-weight: 700; margin-bottom: 12px; }
@@ -403,6 +420,12 @@ function saveCfg() {
           <div class="form-grid">
             <div class="form-group"><label>Proveedor</label><input type="text" id="pg-proveedor" list="pg-prov-list" placeholder="Escribí o elegí..." oninput="pagosResumen()"><datalist id="pg-prov-list"></datalist></div>
             <div class="form-group"><label>Fecha de OP</label><input type="date" id="pg-fecha"></div>
+            <div class="form-group"><label>Tipo de OP</label>
+              <select id="pg-tipo" onchange="pagosCambiarTipo()">
+                <option value="1">Tipo 1 — Caja 1 + Echeqs/Propios</option>
+                <option value="2">Tipo 2 — Caja 2 (sin echeqs ni propios)</option>
+              </select>
+            </div>
             <div class="form-group" style="align-self:end"><div style="font-size:11px;color:var(--text3)">Próximo N°: <strong id="pg-numero-preview" style="color:var(--accent)">OP-2026-0001</strong></div></div>
           </div>
         </div>
@@ -444,7 +467,7 @@ function saveCfg() {
           </div>
 
           <!-- Echeqs -->
-          <div style="margin-bottom:16px;padding:10px;border:1px solid var(--border);border-radius:8px;background:#fafafa">
+          <div id="pg-card-echeqs" style="margin-bottom:16px;padding:10px;border:1px solid var(--border);border-radius:8px;background:#fafafa">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
               <strong style="font-size:13px">Echeqs disponibles</strong>
               <button class="btn btn-sm" onclick="pagosOpenSelectorEcheqs()">+ Agregar echeq</button>
@@ -455,7 +478,7 @@ function saveCfg() {
           </div>
 
           <!-- Cheques propios -->
-          <div style="margin-bottom:6px;padding:10px;border:1px solid var(--border);border-radius:8px;background:#fafafa">
+          <div id="pg-card-propios" style="margin-bottom:6px;padding:10px;border:1px solid var(--border);border-radius:8px;background:#fafafa">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
               <strong style="font-size:13px">Cheques propios emitidos</strong>
               <span style="font-size:11px;color:var(--text3)">(informativo - los emitís por afuera)</span>
@@ -1327,6 +1350,36 @@ function pagosShowTab(tab) {
   if (tab === 'historial') renderPagosHistorial();
 }
 
+function pagosCambiarTipo() {
+  const tipo = document.getElementById('pg-tipo').value;
+  const cardEch = document.getElementById('pg-card-echeqs');
+  const cardProp = document.getElementById('pg-card-propios');
+  if (tipo === '2') {
+    // Tipo 2: solo caja2, sin echeqs ni propios
+    if (cardEch) cardEch.style.display = 'none';
+    if (cardProp) cardProp.style.display = 'none';
+    // Limpiar selecciones de echeqs y propios
+    if (PAGOS_FORM.echeqs.length || PAGOS_FORM.propios.length) {
+      PAGOS_FORM.echeqs = [];
+      PAGOS_FORM.propios = [];
+      pagosEchRender();
+      pagosPropioRender();
+    }
+  } else {
+    // Tipo 1: todos los medios disponibles
+    if (cardEch) cardEch.style.display = '';
+    if (cardProp) cardProp.style.display = '';
+  }
+  // Limpiar cheques físicos seleccionados (porque la caja ya no aplica)
+  const cajaPermitida = tipo === '2' ? 'caja2' : 'caja1';
+  const validos = PAGOS_FORM.chequesFisicos.filter(c => c.caja === cajaPermitida);
+  if (validos.length !== PAGOS_FORM.chequesFisicos.length) {
+    PAGOS_FORM.chequesFisicos = validos;
+    pagosFisRender();
+  }
+  pagosResumen();
+}
+
 // ── Facturas ────────────────────────────────────────────────────
 function pagosFacturaAdd() {
   PAGOS_FORM.facturas.push({ numero: '', fecha: today(), condiciones: '', vencimiento: '', total: '' });
@@ -1392,7 +1445,9 @@ function pagosOpenSelectorFisicos() {
 }
 function pagosRenderSelectorFisicos() {
   const buscar = (document.getElementById('pg-sel-fis-buscar')?.value || '').toLowerCase().trim();
-  let lista = STATE.cheques.filter(c => c.estado === 'En cartera');
+  const tipo = document.getElementById('pg-tipo')?.value || '1';
+  const cajaPermitida = tipo === '2' ? 'caja2' : 'caja1';
+  let lista = STATE.cheques.filter(c => c.estado === 'En cartera' && c.caja === cajaPermitida);
   if (buscar) lista = lista.filter(c =>
     (c.numero||'').includes(buscar) ||
     (c.banco||'').toLowerCase().includes(buscar) ||
@@ -1402,17 +1457,21 @@ function pagosRenderSelectorFisicos() {
   lista.sort((a,b) => (a.fecha_cobro||'').localeCompare(b.fecha_cobro||''));
   const tbody = document.getElementById('pg-sel-fis-body');
   if (!tbody) return;
-  tbody.innerHTML = lista.map(c => {
-    const sel = PAGOS_SEL_FIS.has(c.id);
-    return `<tr style="cursor:pointer;${sel?'background:#e0f2fe':''}" onclick="pagosToggleFisico(${c.id})">
-      <td style="text-align:center"><input type="checkbox" ${sel?'checked':''} onclick="event.stopPropagation();pagosToggleFisico(${c.id})"></td>
-      <td>${c.fecha_cobro?fmtD(c.fecha_cobro):''}</td>
-      <td>${c.banco||''}</td>
-      <td style="font-family:'DM Mono',monospace">${c.numero||''}</td>
-      <td>${c.cliente||''}</td>
-      <td style="text-align:right;font-weight:600">${fmtM(c.importe)}</td>
-    </tr>`;
-  }).join('');
+  if (lista.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:20px;color:var(--text3)">Sin cheques en cartera de ' + cajaPermitida + '</td></tr>';
+  } else {
+    tbody.innerHTML = lista.map(c => {
+      const sel = PAGOS_SEL_FIS.has(c.id);
+      return `<tr style="cursor:pointer;${sel?'background:#e0f2fe':''}" onclick="pagosToggleFisico(${c.id})">
+        <td style="text-align:center"><input type="checkbox" ${sel?'checked':''} onclick="event.stopPropagation();pagosToggleFisico(${c.id})"></td>
+        <td>${c.fecha_cobro?fmtD(c.fecha_cobro):''}</td>
+        <td>${c.banco||''}</td>
+        <td style="font-family:'DM Mono',monospace">${c.numero||''}</td>
+        <td>${c.cliente||''}</td>
+        <td style="text-align:right;font-weight:600">${fmtM(c.importe)}</td>
+      </tr>`;
+    }).join('');
+  }
   // Actualizar contadores
   const sel = STATE.cheques.filter(c => PAGOS_SEL_FIS.has(c.id));
   const tot = sel.reduce((a,c) => a + c.importe, 0);
@@ -1651,8 +1710,10 @@ async function pagosGenerarOP() {
   const num = `OP-${año}-${String(STATE.opSeq[año]).padStart(4,'0')}`;
 
   // Crear OP
+  const tipo = document.getElementById('pg-tipo').value || '1';
   const op = {
     id: num,
+    tipo: tipo,
     fecha: fecha,
     proveedor: proveedor,
     facturas: PAGOS_FORM.facturas.map(f => ({
@@ -1725,6 +1786,9 @@ function pagosLimpiar() {
   PAGOS_FORM = { facturas: [], chequesFisicos: [], echeqs: [], propios: [] };
   document.getElementById('pg-proveedor').value = '';
   document.getElementById('pg-fecha').value = today();
+  const elTipo = document.getElementById('pg-tipo');
+  if (elTipo) elTipo.value = '1';
+  pagosCambiarTipo(); // restaura visibilidad de cards
   pagosFacturaRender();
   pagosFisRender();
   pagosEchRender();
@@ -1741,6 +1805,7 @@ function pagosMostrarOPView(op) {
   html += '<h1>WINFLEX S.A.</h1>';
   html += '<div class="op-num">ORDEN DE PAGO N° ' + op.id + '</div>';
   html += '<div class="info-row"><div><strong>Proveedor:</strong> ' + (op.proveedor||'') + '</div><div><strong>Fecha:</strong> ' + (op.fecha?fmtD(op.fecha):'') + '</div></div>';
+  if (op.tipo) html += '<div class="info-row"><div style="font-size:11px;color:#555">Tipo de OP: ' + (op.tipo === '2' || op.tipo === 2 ? 'Tipo 2 (Caja 2)' : 'Tipo 1 (Caja 1 + Echeqs)') + '</div></div>';
 
   // Facturas
   html += '<div class="seccion">FACTURAS A CANCELAR</div>';
