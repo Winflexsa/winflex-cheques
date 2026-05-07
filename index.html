@@ -991,7 +991,9 @@ function initLote() {
   if (!fr.value) fr.value = today();
   // Populate cliente select
   const cli = document.getElementById('lt-cliente');
-  if (cli.children.length < 2) CLIENTES_BD.forEach(c => { const o = document.createElement('option'); o.value = c; o.textContent = c; cli.appendChild(o); });
+  if (cli && cli.children.length < 2) CLIENTES_BD.forEach(c => { const o = document.createElement('option'); o.value = c; o.textContent = c; cli.appendChild(o); });
+  // Aplicar combo (permite agregar nuevos)
+  initCombo('lt-cliente', 'clientes');
   // Si está vacío, agregar la primera fila
   if (LOTE.length === 0) loteAddRow();
   loteRender();
@@ -1032,11 +1034,17 @@ function loteRender() {
     return;
   }
   if (empty) empty.style.display = 'none';
-  // Build banco options once
-  const bancoOpts = '<option value="">—</option>' + BANCOS_BD.map(b => '<option value="'+b+'">'+b+'</option>').join('');
+  // Datalist con bancos (se actualiza siempre porque BANCOS_BD puede cambiar)
+  let dl = document.getElementById('lt-banco-datalist');
+  if (!dl) {
+    dl = document.createElement('datalist');
+    dl.id = 'lt-banco-datalist';
+    document.body.appendChild(dl);
+  }
+  dl.innerHTML = BANCOS_BD.map(b => '<option value="'+b+'">').join('');
   tbody.innerHTML = LOTE.map((r,i) => `<tr>
     <td><input type="text" value="${r.numero||''}" oninput="loteUpdate(${i},'numero',this.value)" style="width:100%;padding:5px 7px;border:1px solid var(--border);border-radius:4px;font-size:12px;font-family:'DM Mono',monospace"></td>
-    <td><select onchange="loteUpdate(${i},'banco',this.value)" style="width:100%;padding:5px 7px;border:1px solid var(--border);border-radius:4px;font-size:12px">${bancoOpts.replace('value="'+r.banco+'"','value="'+r.banco+'" selected')}</select></td>
+    <td><input type="text" list="lt-banco-datalist" value="${(r.banco||'').replace(/"/g,'&quot;')}" oninput="loteUpdate(${i},'banco',this.value)" placeholder="Banco..." style="width:100%;padding:5px 7px;border:1px solid var(--border);border-radius:4px;font-size:12px"></td>
     <td><input type="number" min="0" step="0.01" value="${r.importe||''}" oninput="loteUpdate(${i},'importe',this.value)" style="width:100%;padding:5px 7px;border:1px solid var(--border);border-radius:4px;font-size:12px;text-align:right"></td>
     <td><input type="date" value="${r.fecha_cobro||''}" oninput="loteUpdate(${i},'fecha_cobro',this.value)" style="width:100%;padding:5px 7px;border:1px solid var(--border);border-radius:4px;font-size:12px"></td>
     <td><input type="text" value="${r.cuit||''}" oninput="loteUpdate(${i},'cuit',this.value)" placeholder="11 dígitos" style="width:100%;padding:5px 7px;border:1px solid var(--border);border-radius:4px;font-size:12px;font-family:'DM Mono',monospace"></td>
@@ -1056,6 +1064,12 @@ async function loteGuardar() {
   if (!recibo) { toast('Falta el N° de recibo', 'warn'); return; }
   if (!fechaRec) { toast('Falta la fecha de recibo', 'warn'); return; }
   if (LOTE.length === 0) { toast('No hay cheques para guardar', 'warn'); return; }
+  // Agregar cliente y bancos nuevos a las listas en memoria (si no existen)
+  if (cliente && !CLIENTES_BD.includes(cliente)) CLIENTES_BD.push(cliente);
+  LOTE.forEach(r => {
+    const b = (r.banco||'').trim();
+    if (b && !BANCOS_BD.includes(b)) BANCOS_BD.push(b);
+  });
   // Validar cada cheque
   const nuevos = [];
   for (let i = 0; i < LOTE.length; i++) {
