@@ -415,9 +415,11 @@ function saveCfg() {
           </div>
           <div class="tbl-wrap"><table id="pg-fac-table">
             <thead><tr>
-              <th style="width:160px">N° Factura</th>
-              <th style="width:140px">Fecha</th>
-              <th style="width:160px;text-align:right">Importe</th>
+              <th style="width:140px">N° Factura</th>
+              <th style="width:130px">Fecha</th>
+              <th style="width:100px">Cond.</th>
+              <th style="width:130px">Vencimiento</th>
+              <th style="width:140px;text-align:right">Importe</th>
               <th></th>
             </tr></thead>
             <tbody id="pg-fac-body"></tbody>
@@ -1327,7 +1329,7 @@ function pagosShowTab(tab) {
 
 // ── Facturas ────────────────────────────────────────────────────
 function pagosFacturaAdd() {
-  PAGOS_FORM.facturas.push({ numero: '', fecha: today(), total: '' });
+  PAGOS_FORM.facturas.push({ numero: '', fecha: today(), condiciones: '', vencimiento: '', total: '' });
   pagosFacturaRender();
 }
 function pagosFacturaRemove(idx) {
@@ -1335,9 +1337,22 @@ function pagosFacturaRemove(idx) {
   pagosFacturaRender();
   pagosResumen();
 }
+function pagosCalcVencimiento(fecha, dias) {
+  if (!fecha || dias === '' || dias === null || dias === undefined) return '';
+  const d = new Date(fecha + 'T12:00:00');
+  if (isNaN(d.getTime())) return '';
+  d.setDate(d.getDate() + parseInt(dias));
+  return d.toISOString().substring(0,10);
+}
 function pagosFacturaUpdate(idx, campo, valor) {
   if (!PAGOS_FORM.facturas[idx]) return;
   PAGOS_FORM.facturas[idx][campo] = valor;
+  // Recalcular vencimiento si cambia fecha o condiciones
+  if (campo === 'fecha' || campo === 'condiciones') {
+    const f = PAGOS_FORM.facturas[idx];
+    f.vencimiento = pagosCalcVencimiento(f.fecha, f.condiciones);
+    pagosFacturaRender();
+  }
   pagosResumen();
 }
 function pagosFacturaRender() {
@@ -1351,12 +1366,21 @@ function pagosFacturaRender() {
   }
   if (empty) empty.style.display = 'none';
   const styleInput = 'width:100%;padding:5px 7px;border:1px solid var(--border);border-radius:4px;font-size:12px';
-  tbody.innerHTML = PAGOS_FORM.facturas.map((f,i) => `<tr>
+  const condOpts = ['', '0', '15', '21', '30', '45', '60', '75', '90', '120'].map(d => {
+    const lbl = d === '' ? '—' : (d === '0' ? 'Contado' : d + ' días');
+    return '<option value="'+d+'">'+lbl+'</option>';
+  }).join('');
+  tbody.innerHTML = PAGOS_FORM.facturas.map((f,i) => {
+    const condSel = condOpts.replace('value="'+(f.condiciones||'')+'"','value="'+(f.condiciones||'')+'" selected');
+    return `<tr>
     <td><input type="text" value="${f.numero||''}" oninput="pagosFacturaUpdate(${i},'numero',this.value)" style="${styleInput};font-family:'DM Mono',monospace"></td>
     <td><input type="date" value="${f.fecha||''}" oninput="pagosFacturaUpdate(${i},'fecha',this.value)" style="${styleInput}"></td>
+    <td><select onchange="pagosFacturaUpdate(${i},'condiciones',this.value)" style="${styleInput}">${condSel}</select></td>
+    <td><input type="text" value="${f.vencimiento?fmtD(f.vencimiento):''}" readonly style="${styleInput};background:#f3f4f6;color:var(--text2);cursor:default" title="Se calcula automáticamente"></td>
     <td><input type="number" min="0" step="0.01" value="${f.total||''}" oninput="pagosFacturaUpdate(${i},'total',this.value)" style="${styleInput};text-align:right"></td>
     <td><button class="btn btn-sm btn-danger" onclick="pagosFacturaRemove(${i})" title="Eliminar">✕</button></td>
-  </tr>`).join('');
+  </tr>`;
+  }).join('');
 }
 
 // ── Selector de cheques físicos ─────────────────────────────────
@@ -1633,6 +1657,8 @@ async function pagosGenerarOP() {
     proveedor: proveedor,
     facturas: PAGOS_FORM.facturas.map(f => ({
       numero: f.numero, fecha: f.fecha,
+      condiciones: f.condiciones || '',
+      vencimiento: f.vencimiento || '',
       total: parseFloat(f.total)||0
     })),
     cheques_fisicos: PAGOS_FORM.chequesFisicos.map(c => ({
@@ -1718,9 +1744,12 @@ function pagosMostrarOPView(op) {
 
   // Facturas
   html += '<div class="seccion">FACTURAS A CANCELAR</div>';
-  html += '<table><thead><tr><th>N° Factura</th><th>Fecha</th><th style="text-align:right">Importe</th></tr></thead><tbody>';
+  html += '<table><thead><tr><th>N° Factura</th><th>Fecha</th><th>Cond.</th><th>Vencimiento</th><th style="text-align:right">Importe</th></tr></thead><tbody>';
   op.facturas.forEach(f => {
-    html += `<tr><td>${f.numero||''}</td><td>${f.fecha?fmtD(f.fecha):''}</td><td class="num">${fmtM(f.total)}</td></tr>`;
+    const cond = f.condiciones === '' || f.condiciones === undefined || f.condiciones === null
+      ? '—'
+      : (f.condiciones === '0' || f.condiciones === 0 ? 'Contado' : f.condiciones + ' días');
+    html += `<tr><td>${f.numero||''}</td><td>${f.fecha?fmtD(f.fecha):''}</td><td>${cond}</td><td>${f.vencimiento?fmtD(f.vencimiento):''}</td><td class="num">${fmtM(f.total)}</td></tr>`;
   });
   html += '</tbody></table>';
 
