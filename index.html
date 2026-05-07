@@ -915,26 +915,7 @@ function validarCheque(c) {
     const soloDigitos = c.cuit.replace(/\D/g, '');
     if (soloDigitos.length !== 11) errores.push('El CUIT debe tener 11 dígitos (tiene '+soloDigitos.length+')');
   }
-  // Fecha cobro no puede ser anterior a fecha recibo
-  if (c.fecha_recibo && c.fecha_cobro && c.fecha_recibo > c.fecha_cobro) {
-    errores.push('La fecha de cobro es anterior a la fecha de recibo');
-  }
-  // Fecha aplicado no puede ser futuro
-  if (c.fecha_aplicado) {
-    const t = today();
-    if (c.fecha_aplicado > t) errores.push('La fecha de aplicado no puede ser futura (hoy es '+t+')');
-  }
-  // Año razonable: rechazar fechas con año mayor a hoy+5 (son typos)
-  const checkYear = (campo, val) => {
-    if (!val) return;
-    const y = parseInt(val.substring(0,4));
-    const yHoy = new Date().getFullYear();
-    if (y > yHoy + 5) errores.push(`${campo} tiene año ${y}, parece un typo (probablemente quisiste poner ${y-1})`);
-    if (y < 2020) errores.push(`${campo} tiene año ${y}, parece un typo`);
-  };
-  checkYear('Fecha cobro', c.fecha_cobro);
-  checkYear('Fecha recibo', c.fecha_recibo);
-  checkYear('Fecha aplicado', c.fecha_aplicado);
+  // Sin validaciones de fechas - cualquier combinación es válida
   return errores;
 }
 
