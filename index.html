@@ -700,7 +700,43 @@ async function loadCloud() {
     // Forzar importes a number (algunos pueden haber quedado como string)
     STATE.cheques.forEach(c => { c.importe = parseFloat(c.importe) || 0; });
     STATE.echeqs.forEach(e => { e.importe = parseFloat(e.importe) || 0; });
+    // Detectar y eliminar cheques con IDs duplicados (race conditions de sync)
+    const _seenIds = new Set();
+    const _dupIds = [];
+    const _dedupChq = [];
+    STATE.cheques.forEach(c => {
+      if (_seenIds.has(c.id)) { _dupIds.push(c.id); return; }
+      _seenIds.add(c.id); _dedupChq.push(c);
+    });
+    let _needsCleanSave = false;
+    if (_dupIds.length) {
+      console.warn('[loadCloud] Cheques duplicados eliminados:', _dupIds);
+      STATE.cheques = _dedupChq;
+      _needsCleanSave = true;
+      toast('⚠ ' + _dupIds.length + ' cheques duplicados detectados y limpiados', 'warn');
+    }
+    // Mismo para echeqs
+    const _seenEIds = new Set();
+    const _dupEIds = [];
+    const _dedupEch = [];
+    STATE.echeqs.forEach(e => {
+      if (_seenEIds.has(e.id)) { _dupEIds.push(e.id); return; }
+      _seenEIds.add(e.id); _dedupEch.push(e);
+    });
+    if (_dupEIds.length) {
+      console.warn('[loadCloud] Echeqs duplicados eliminados:', _dupEIds);
+      STATE.echeqs = _dedupEch;
+      _needsCleanSave = true;
+    }
     setSyncState('ok','Sincronizado');
+    // Si hubo duplicados, guardar versión limpia a JSONBin para arreglar definitivamente
+    if (_needsCleanSave) {
+      console.log('[loadCloud] Guardando versión deduplicada a JSONBin...');
+      setTimeout(() => saveCloud().then(() => {
+        console.log('[loadCloud] Versión limpia guardada en JSONBin');
+        toast('✓ Datos limpios guardados en la nube', 'ok');
+      }), 1500);
+    }
   } catch(e) {
     setSyncState('err','Error: '+e.message);
     console.error('[loadCloud]', e);
@@ -1483,7 +1519,11 @@ function pagosToggleFisico(id) {
   pagosRenderSelectorFisicos();
 }
 function pagosConfirmarSelectorFisicos() {
-  PAGOS_FORM.chequesFisicos = STATE.cheques.filter(c => PAGOS_SEL_FIS.has(c.id));
+  // Dedup defensivo: si hay IDs duplicados en STATE.cheques, tomar solo el primer cheque por ID
+  const idsAgregados = new Set();
+  PAGOS_FORM.chequesFisicos = STATE.cheques
+    .filter(c => PAGOS_SEL_FIS.has(c.id) && !idsAgregados.has(c.id) && (idsAgregados.add(c.id), true))
+    .map(c => ({...c, importe: parseFloat(c.importe) || 0}));
   document.getElementById('pg-sel-fis-modal').style.display = 'none';
   pagosFisRender();
   pagosResumen();
@@ -1565,7 +1605,10 @@ function pagosToggleEcheq(id) {
   pagosRenderSelectorEcheqs();
 }
 function pagosConfirmarSelectorEcheqs() {
-  PAGOS_FORM.echeqs = (STATE.echeqs||[]).filter(e => PAGOS_SEL_ECH.has(e.id));
+  const idsAgregados = new Set();
+  PAGOS_FORM.echeqs = (STATE.echeqs||[])
+    .filter(e => PAGOS_SEL_ECH.has(e.id) && !idsAgregados.has(e.id) && (idsAgregados.add(e.id), true))
+    .map(e => ({...e, importe: parseFloat(e.importe) || 0}));
   document.getElementById('pg-sel-ech-modal').style.display = 'none';
   pagosEchRender();
   pagosResumen();
