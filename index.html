@@ -697,6 +697,9 @@ async function loadCloud() {
     STATE.ops = d.record.ops || [];
     STATE.opSeq = d.record.opSeq || {};
     STATE.proveedores = d.record.prov || [];
+    // Forzar importes a number (algunos pueden haber quedado como string)
+    STATE.cheques.forEach(c => { c.importe = parseFloat(c.importe) || 0; });
+    STATE.echeqs.forEach(e => { e.importe = parseFloat(e.importe) || 0; });
     setSyncState('ok','Sincronizado');
   } catch(e) {
     setSyncState('err','Error: '+e.message);
@@ -1082,7 +1085,7 @@ async function loteGuardar() {
     nuevos.push(cheque);
   }
   // Confirmar antes de guardar
-  const total = nuevos.reduce((a,c) => a + c.importe, 0);
+  const total = nuevos.reduce((a,c) => a + (parseFloat(c.importe)||0), 0);
   if (!confirm('¿Guardar ' + nuevos.length + ' cheques del recibo ' + recibo + ' (' + cliente + ')?\n\nTotal: ' + fmtM(total))) {
     // Devolver IDs
     STATE.nextId -= nuevos.length;
@@ -1470,7 +1473,7 @@ function pagosRenderSelectorFisicos() {
   }
   // Actualizar contadores
   const sel = STATE.cheques.filter(c => PAGOS_SEL_FIS.has(c.id));
-  const tot = sel.reduce((a,c) => a + c.importe, 0);
+  const tot = sel.reduce((a,c) => a + (parseFloat(c.importe)||0), 0);
   document.getElementById('pg-sel-fis-cont').textContent = sel.length;
   document.getElementById('pg-sel-fis-tot').textContent = fmtM(tot);
 }
@@ -1513,7 +1516,7 @@ function pagosFisRender() {
       <button class="btn btn-sm btn-danger" onclick="pagosFisRemove(${c.id})" style="padding:2px 7px;font-size:11px" title="Quitar">✕</button>
     </div>
   </div>`).join('');
-  const tot = PAGOS_FORM.chequesFisicos.reduce((a,c) => a + c.importe, 0);
+  const tot = PAGOS_FORM.chequesFisicos.reduce((a,c) => a + (parseFloat(c.importe)||0), 0);
   if (elTot) elTot.textContent = fmtM(tot);
 }
 
@@ -1552,7 +1555,7 @@ function pagosRenderSelectorEcheqs() {
     }).join('');
   }
   const sel = (STATE.echeqs||[]).filter(e => PAGOS_SEL_ECH.has(e.id));
-  const tot = sel.reduce((a,e) => a + e.importe, 0);
+  const tot = sel.reduce((a,e) => a + (parseFloat(e.importe)||0), 0);
   document.getElementById('pg-sel-ech-cont').textContent = sel.length;
   document.getElementById('pg-sel-ech-tot').textContent = fmtM(tot);
 }
@@ -1594,7 +1597,7 @@ function pagosEchRender() {
       <button class="btn btn-sm btn-danger" onclick="pagosEchRemove(${e.id})" style="padding:2px 7px;font-size:11px" title="Quitar">✕</button>
     </div>
   </div>`).join('');
-  const tot = PAGOS_FORM.echeqs.reduce((a,e) => a + e.importe, 0);
+  const tot = PAGOS_FORM.echeqs.reduce((a,e) => a + (parseFloat(e.importe)||0), 0);
   if (elTot) elTot.textContent = fmtM(tot);
 }
 
@@ -1649,8 +1652,8 @@ function pagosPropioRender() {
 // ── Resumen ─────────────────────────────────────────────────────
 function pagosResumen() {
   const totalFac = PAGOS_FORM.facturas.reduce((a,f) => a + (parseFloat(f.total)||0), 0);
-  const totalFis = PAGOS_FORM.chequesFisicos.reduce((a,c) => a + c.importe, 0);
-  const totalEch = PAGOS_FORM.echeqs.reduce((a,e) => a + e.importe, 0);
+  const totalFis = PAGOS_FORM.chequesFisicos.reduce((a,c) => a + (parseFloat(c.importe)||0), 0);
+  const totalEch = PAGOS_FORM.echeqs.reduce((a,e) => a + (parseFloat(e.importe)||0), 0);
   const totalProp = PAGOS_FORM.propios.reduce((a,p) => a + (parseFloat(p.importe)||0), 0);
   const totalPagado = totalFis + totalEch + totalProp;
   const saldo = totalFac - totalPagado;
@@ -1685,8 +1688,8 @@ async function pagosGenerarOP() {
 
   // Calcular totales
   const totalFac = PAGOS_FORM.facturas.reduce((a,f) => a + parseFloat(f.total||0), 0);
-  const totalFis = PAGOS_FORM.chequesFisicos.reduce((a,c) => a + c.importe, 0);
-  const totalEch = PAGOS_FORM.echeqs.reduce((a,e) => a + e.importe, 0);
+  const totalFis = PAGOS_FORM.chequesFisicos.reduce((a,c) => a + (parseFloat(c.importe)||0), 0);
+  const totalEch = PAGOS_FORM.echeqs.reduce((a,e) => a + (parseFloat(e.importe)||0), 0);
   const totalProp = PAGOS_FORM.propios.reduce((a,p) => a + (parseFloat(p.importe)||0), 0);
   const totalPagado = totalFis + totalEch + totalProp;
   const saldo = totalFac - totalPagado;
@@ -2152,13 +2155,25 @@ function abrirEditar(id) {
   if(cli.children.length<2) CLIENTES_BD.forEach(d=>{const o=document.createElement('option');o.value=d;o.textContent=d;cli.appendChild(o);});
   const ban=document.getElementById('ed-banco');
   if(ban.children.length<2) BANCOS_BD.forEach(d=>{const o=document.createElement('option');o.value=d;o.textContent=d;ban.appendChild(o);});
+  // Asegurar que las opciones existen aunque el valor del cheque no esté en las listas predefinidas
+  const ensureOpt = (selectEl, val) => {
+    if (!val || !selectEl) return;
+    if (![...selectEl.options].some(o => o.value === val)) {
+      const o = document.createElement('option'); o.value = val; o.textContent = val;
+      const nuevoOpt = selectEl.querySelector('[value="__nuevo__"]');
+      if (nuevoOpt) selectEl.insertBefore(o, nuevoOpt); else selectEl.appendChild(o);
+    }
+  };
+  ensureOpt(cli, c.cliente);
+  ensureOpt(ban, c.banco);
+  ensureOpt(dep, c.destino);
   document.getElementById('ed-id-lbl').textContent='#'+id;
   document.getElementById('ed-estado').value=c.estado||'En cartera';
   document.getElementById('ed-destino').value=c.destino||'';
   document.getElementById('ed-fecha-aplic').value=c.fecha_aplicado||'';
   document.getElementById('ed-cliente').value=c.cliente||'';
   document.getElementById('ed-banco').value=c.banco||'';
-  document.getElementById('ed-importe').value=c.importe||0;
+  document.getElementById('ed-importe').value=parseFloat(c.importe)||0;
   document.getElementById('ed-numero').value=c.numero||'';
   document.getElementById('ed-cuit').value=c.cuit||'';
   document.getElementById('ed-fecha-rec').value=c.fecha_recibo||'';
@@ -2181,7 +2196,7 @@ async function guardarEditar() {
     fecha_aplicado: document.getElementById('ed-fecha-aplic').value,
     cliente: document.getElementById('ed-cliente').value,
     banco: document.getElementById('ed-banco').value,
-    importe: parseFloat(document.getElementById('ed-importe').value)||c.importe,
+    importe: parseFloat(document.getElementById('ed-importe').value) || parseFloat(c.importe) || 0,
     numero: document.getElementById('ed-numero').value,
     cuit: document.getElementById('ed-cuit').value,
     fecha_recibo: document.getElementById('ed-fecha-rec').value,
