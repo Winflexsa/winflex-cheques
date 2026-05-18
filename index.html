@@ -2497,6 +2497,8 @@ async function boot() {
   document.getElementById('cfg-modal').style.display='none';
   await initApp();
   document.getElementById('np-fecha-rec').value=today();
+  // ⬇ Integración con app de Cobranzas: detectar prefill desde localStorage
+  setTimeout(checkPrefillCheque, 500);
   // Auto-refresh cada 90s para sincronizar con cambios de otros usuarios
   setInterval(async () => {
     if (_saving) return; // no pisar guardado en curso
@@ -2535,6 +2537,71 @@ async function boot() {
   }, 90000);
 }
 boot();
+
+// ────────────────────────────────────────────────────────────────
+// INTEGRACIÓN CON APP DE COBRANZAS
+// Recibe datos de un cheque vía localStorage y precarga el form.
+// Activada por la app de Cobranzas cuando hace click en "Cargar en app Cheques".
+// ────────────────────────────────────────────────────────────────
+function checkPrefillCheque() {
+  try {
+    const raw = localStorage.getItem('winflex_prefill_cheque');
+    if (!raw) return;
+    const data = JSON.parse(raw);
+    // Validar que no sea muy viejo (max 5 min de antigüedad)
+    if (!data._ts || (Date.now() - data._ts) > 5 * 60 * 1000) {
+      localStorage.removeItem('winflex_prefill_cheque');
+      return;
+    }
+    // Navegar a "Nuevo cheque"
+    const navBtn = document.querySelector('.nav-item[onclick*="\'nuevo\'"]');
+    if (navBtn) navBtn.click();
+    else if (typeof goTo === 'function') goTo('nuevo');
+    // Esperar que se inicialicen los selects
+    setTimeout(() => {
+      const set = (id, val) => { const el = document.getElementById(id); if (el && val != null && val !== '') el.value = val; };
+      const setSelectAddOption = (id, val) => {
+        if (!val) return;
+        const sel = document.getElementById(id);
+        if (!sel) return;
+        let exists = false;
+        for (const o of sel.options) if (o.value === val) { exists = true; break; }
+        if (!exists) {
+          const opt = document.createElement('option');
+          opt.value = val; opt.textContent = val;
+          sel.appendChild(opt);
+        }
+        sel.value = val;
+      };
+      setSelectAddOption('np-cliente', data.cliente);
+      setSelectAddOption('np-banco', data.banco);
+      set('np-importe', data.importe);
+      set('np-numero', data.numero);
+      set('np-fecha-rec', data.fecha_recibo || (typeof today === 'function' ? today() : new Date().toISOString().slice(0,10)));
+      set('np-fecha-cob', data.fecha_cobro);
+      set('np-plaza', data.plaza);
+      set('np-cuit', data.cuit);
+      set('np-recibo', data.recibo);
+      set('np-caja', data.caja || 'caja1');
+      if (typeof toast === 'function') toast('Datos precargados desde Cobranzas — revisá y guardá', 'ok');
+      // Banner visible arriba del form
+      const pgNuevo = document.getElementById('pg-nuevo');
+      if (pgNuevo && !document.getElementById('prefill-banner')) {
+        const banner = document.createElement('div');
+        banner.id = 'prefill-banner';
+        banner.style.cssText = 'background:#dcfce7;color:#16a34a;padding:10px 14px;border-radius:8px;margin-bottom:12px;font-size:13px;font-weight:500';
+        banner.textContent = '✓ Datos precargados desde la app de Cobranzas. Revisá y guardá el cheque.';
+        pgNuevo.insertBefore(banner, pgNuevo.firstChild.nextSibling);
+        setTimeout(() => { banner.remove(); }, 10000);
+      }
+      // Limpiar la key
+      localStorage.removeItem('winflex_prefill_cheque');
+    }, 400);
+  } catch (e) {
+    console.error('Prefill error:', e);
+    try { localStorage.removeItem('winflex_prefill_cheque'); } catch (_) {}
+  }
+}
 </script>
 
 <!-- Modal: Selector de cheques físicos -->
