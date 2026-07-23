@@ -485,6 +485,7 @@ function saveCfg() {
             <th>F.Cobro</th>
             <th>Estado</th>
             <th>Destino</th>
+            <th></th>
           </tr></thead>
           <tbody id="ec-body"></tbody>
         </table></div>
@@ -1649,6 +1650,17 @@ function echeqsLimpiarTodo() {
   saveCloud().then(() => { renderEcheqs(); toast('Echeqs disponibles eliminados', 'ok'); });
 }
 
+async function echeqEliminar(id) {
+  const e = (STATE.echeqs || []).find(x => x.id === id);
+  if (!e) return;
+  if (e.estado === 'usado') { toast('No se puede eliminar un echeq usado en una OP', 'warn'); return; }
+  if (!confirm('¿Eliminar el echeq N° ' + e.numero + ' de ' + e.nombre + ' por ' + fmtM(e.importe) + '?')) return;
+  STATE.echeqs = STATE.echeqs.filter(x => x.id !== id);
+  await saveCloud();
+  renderEcheqs();
+  toast('Echeq eliminado', 'ok');
+}
+
 function renderEcheqs() {
   const lista = STATE.echeqs || [];
   const filtroEstado = document.getElementById('ec-filter-estado')?.value || '';
@@ -1708,6 +1720,7 @@ function renderEcheqs() {
     <td>${e.fecha_cobro ? fmtD(e.fecha_cobro) : ''}</td>
     <td><span class="badge ${e.estado === 'usado' ? 'badge-aplicado' : 'badge-cartera'}">${e.estado === 'usado' ? 'Usado' : 'Disponible'}</span></td>
     <td style="font-size:12px;color:var(--text2)">${e.destino || ''}</td>
+    <td style="text-align:center">${e.estado !== 'usado' ? `<button class="btn btn-sm" onclick="echeqEliminar(${e.id})" title="Eliminar echeq">🗑</button>` : ''}</td>
   </tr>`).join('');
 }
 
