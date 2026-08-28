@@ -560,6 +560,11 @@ function saveCfg() {
 
       <!-- TAB: Nueva OP -->
       <div id="pg-tab-nueva-content">
+        <!-- Banner de edición -->
+        <div id="pg-edit-banner" style="display:none;align-items:center;justify-content:space-between;gap:12px;background:#fef3c7;border:1px solid #f59e0b;border-radius:8px;padding:10px 14px;margin-bottom:12px">
+          <div style="font-size:13px;color:#92400e">✏️ Estás <strong>editando</strong> la orden de pago <strong id="pg-edit-num"></strong>. Al guardar se reemplaza la versión anterior (mismo N°).</div>
+          <button class="btn btn-sm" onclick="pagosCancelarEdicion()" style="white-space:nowrap">Cancelar edición</button>
+        </div>
         <!-- Cabecera -->
         <div class="card">
           <div class="card-title">Datos de la OP</div>
@@ -572,7 +577,7 @@ function saveCfg() {
                 <option value="2">Tipo 2 — Caja 2 (sin echeqs ni propios)</option>
               </select>
             </div>
-            <div class="form-group" style="align-self:end"><div style="font-size:11px;color:var(--text3)">Próximo N°: <strong id="pg-numero-preview" style="color:var(--accent)">OP-2026-0001</strong></div></div>
+            <div class="form-group" style="align-self:end"><div style="font-size:11px;color:var(--text3)"><span id="pg-numero-label">Próximo N°: </span><strong id="pg-numero-preview" style="color:var(--accent)">OP-2026-0001</strong></div></div>
           </div>
         </div>
 
@@ -689,7 +694,7 @@ function saveCfg() {
             <div><div style="font-size:11px;color:var(--text3)">Saldo</div><div style="font-size:20px;font-weight:700" id="pg-resumen-saldo">$ 0</div></div>
           </div>
           <div class="btn-row" style="margin-top:16px">
-            <button class="btn btn-primary" onclick="pagosGenerarOP()" style="font-size:14px;padding:10px 20px">📄 Generar Orden de Pago</button>
+            <button class="btn btn-primary" id="pg-btn-generar" onclick="pagosGenerarOP()" style="font-size:14px;padding:10px 20px">📄 Generar Orden de Pago</button>
             <button class="btn" onclick="pagosLimpiar()">Limpiar todo</button>
           </div>
         </div>
@@ -2057,6 +2062,21 @@ async function facturaEliminar(id) {
 let PAGOS_FORM = { facturas: [], chequesFisicos: [], echeqs: [], propios: [], retenciones: [], efectivo: 0 };
 let PAGOS_SEL_FIS = new Set(); // selección temporal del modal selector
 let PAGOS_SEL_ECH = new Set();
+let _opEditando = null; // OP que se está editando (referencia a la OP original en STATE.ops)
+
+// Ids de cheques/echeqs que ya pertenecen a la OP en edición (para que sigan
+// apareciendo en los selectores aunque estén marcados como Aplicado/usado)
+function _opEditFisIds(){ return new Set(((_opEditando && _opEditando.cheques_fisicos)||[]).map(c=>c.id)); }
+function _opEditEchIds(){ return new Set(((_opEditando && _opEditando.echeqs)||[]).map(e=>e.id)); }
+// Monto ya imputado a una factura POR la OP en edición
+function _pagosPagadoPropio(f){
+  if (!f || !_opEditando) return 0;
+  return (f.pagos||[]).filter(p => p.op_id === _opEditando.id).reduce((a,p)=>a+(parseFloat(p.monto)||0),0);
+}
+// Pagado por OTRAS OPs
+function _pagosPagadoOtros(f){ return f ? (facturaPagado(f) - _pagosPagadoPropio(f)) : 0; }
+// Saldo disponible para imputar: en edición se "devuelve" lo que la propia OP imputó
+function _pagosSaldoDisp(f){ return f ? (facturaSaldo(f) + _pagosPagadoPropio(f)) : 0; }
 
 function initPagos() {
   // Setear fecha hoy
@@ -2072,7 +2092,7 @@ function initPagos() {
   const seq = (STATE.opSeq && STATE.opSeq[año]) || 0;
   const next = String(seq + 1).padStart(4, '0');
   const elPrev = document.getElementById('pg-numero-preview');
-  if (elPrev) elPrev.textContent = `OP-${año}-${next}`;
+  if (elPrev && !_opEditando) elPrev.textContent = `OP-${año}-${next}`;
   // Render inicial
   pagosFacturaRender();
   pagosFisRender();
@@ -2173,7 +2193,7 @@ function pagosRenderSelectorFacturas() {
   const proveedor = document.getElementById('pg-proveedor').value.trim();
   // Solo facturas del proveedor, no anuladas, con saldo > 0.01
   const lista = STATE.facturas
-    .filter(f => f.proveedor === proveedor && !f.anulada && facturaSaldo(f) > 0.01)
+    .filter(f => f.proveedor === proveedor && !f.anulada && _pagosSaldoDisp(f) > 0.01)
     .sort((a,b) => (a.vencimiento||'').localeCompare(b.vencimiento||''));
 
   const body = document.getElementById('pg-sel-fac-body');
@@ -2184,7 +2204,7 @@ function pagosRenderSelectorFacturas() {
   } else {
     empty.style.display = 'none';
     body.innerHTML = lista.map(f => {
-      const saldo = facturaSaldo(f);
+      const saldo = _pagosSaldoDisp(f);
       const isSel = PAGOS_SEL_FAC.has(f.id);
       const aPagar = isSel ? PAGOS_SEL_FAC.get(f.id) : saldo;
       return '<tr style="background:'+(isSel?'#e0f2fe':'')+'">' +
@@ -2208,7 +2228,7 @@ function pagosToggleFactura(id) {
   const f = STATE.facturas.find(x => x.id === id);
   if (!f) return;
   if (PAGOS_SEL_FAC.has(id)) PAGOS_SEL_FAC.delete(id);
-  else PAGOS_SEL_FAC.set(id, facturaSaldo(f));
+  else PAGOS_SEL_FAC.set(id, _pagosSaldoDisp(f));
   pagosRenderSelectorFacturas();
 }
 
@@ -2248,7 +2268,7 @@ function pagosFacturaUpdateAPagar(idx, valor) {
   if (!PAGOS_FORM.facturas[idx]) return;
   const item = PAGOS_FORM.facturas[idx];
   const f = STATE.facturas.find(x => x.id === item.factura_id);
-  const maxSaldo = f ? facturaSaldo(f) : (item.total||0);
+  const maxSaldo = f ? _pagosSaldoDisp(f) : (item.total||0);
   let v = parseFloat(valor) || 0;
   if (v < 0) v = 0;
   if (v > maxSaldo) v = maxSaldo;
@@ -2274,8 +2294,8 @@ function pagosFacturaRender() {
   if (empty) empty.style.display = 'none';
   tbody.innerHTML = PAGOS_FORM.facturas.map((it,i) => {
     const f = STATE.facturas.find(x => x.id === it.factura_id);
-    const saldoActual = f ? facturaSaldo(f) : (it.total||0);
-    const pagado = f ? facturaPagado(f) : 0;
+    const saldoActual = f ? _pagosSaldoDisp(f) : (it.total||0);
+    const pagado = f ? _pagosPagadoOtros(f) : 0;
     return '<tr>' +
       '<td style="font-family:DM Mono,monospace;font-size:12px">'+escapeHtml(it.numero||'')+'</td>' +
       '<td>'+fmtD(it.vencimiento)+'</td>' +
@@ -2310,7 +2330,8 @@ function pagosRenderSelectorFisicos() {
   const buscar = (document.getElementById('pg-sel-fis-buscar')?.value || '').toLowerCase().trim();
   const tipo = document.getElementById('pg-tipo')?.value || '1';
   const cajaPermitida = tipo === '2' ? 'caja2' : 'caja1';
-  let lista = STATE.cheques.filter(c => c.estado === 'En cartera' && c.caja === cajaPermitida);
+  const _edFis = _opEditFisIds();
+  let lista = STATE.cheques.filter(c => (c.estado === 'En cartera' || _edFis.has(c.id)) && c.caja === cajaPermitida);
   if (buscar) lista = lista.filter(c =>
     (c.numero||'').includes(buscar) ||
     (c.banco||'').toLowerCase().includes(buscar) ||
@@ -2397,7 +2418,8 @@ function pagosOpenSelectorEcheqs() {
 }
 function pagosRenderSelectorEcheqs() {
   const buscar = (document.getElementById('pg-sel-ech-buscar')?.value || '').toLowerCase().trim();
-  let lista = (STATE.echeqs || []).filter(e => e.estado !== 'usado');
+  const _edEch = _opEditEchIds();
+  let lista = (STATE.echeqs || []).filter(e => e.estado !== 'usado' || _edEch.has(e.id));
   if (buscar) lista = lista.filter(e =>
     (e.nombre||'').toLowerCase().includes(buscar) ||
     (e.cuit||'').includes(buscar) ||
@@ -2681,11 +2703,38 @@ async function pagosGenerarOP() {
     if (!confirm('El total pagado supera lo imputado a las facturas en ' + fmtM(-saldo) + '.\n\n¿Generar OP igualmente?')) return;
   }
 
-  // Generar número
-  const año = new Date().getFullYear();
-  if (!STATE.opSeq) STATE.opSeq = {};
-  STATE.opSeq[año] = (STATE.opSeq[año] || 0) + 1;
-  const num = `OP-${año}-${String(STATE.opSeq[año]).padStart(4,'0')}`;
+  // ¿Estamos editando una OP existente?
+  const editando = _opEditando ? (STATE.ops||[]).find(o => o.id === _opEditando.id) : null;
+  if (_opEditando && !editando) { toast('No se encontró la OP original — se cancela la edición', 'warn'); _opEditando = null; pagosEditBannerRender(); return; }
+
+  let num;
+  if (editando) {
+    // Confirmación explícita antes de pisar la OP
+    if (!confirm('¿Guardar los cambios en ' + editando.id + '?\n\nSe revierten los cheques, echeqs y pagos de la versión anterior y se aplican los nuevos.')) return;
+    num = editando.id;
+    // Revertir efectos de la versión anterior de esta OP
+    (editando.cheques_fisicos||[]).forEach(cInOp => {
+      const c = STATE.cheques.find(x => x.id === cInOp.id);
+      if (c && c.estado === 'Aplicado' && c.destino === editando.proveedor) {
+        c.estado = 'En cartera'; c.destino = ''; c.fecha_aplicado = '';
+      }
+    });
+    (editando.echeqs||[]).forEach(eInOp => {
+      const e = (STATE.echeqs||[]).find(x => x.id === eInOp.id);
+      if (e && e.op_id === editando.id) { e.estado = 'disponible'; e.destino = ''; e.op_id = null; }
+    });
+    (editando.facturas||[]).forEach(item => {
+      if (item.factura_id == null) return;
+      const f = STATE.facturas.find(x => x.id === item.factura_id);
+      if (f && f.pagos) f.pagos = f.pagos.filter(p => p.op_id !== editando.id);
+    });
+  } else {
+    // Generar número nuevo
+    const año = new Date().getFullYear();
+    if (!STATE.opSeq) STATE.opSeq = {};
+    STATE.opSeq[año] = (STATE.opSeq[año] || 0) + 1;
+    num = `OP-${año}-${String(STATE.opSeq[año]).padStart(4,'0')}`;
+  }
 
   // Crear OP
   const tipo = document.getElementById('pg-tipo').value || '1';
@@ -2734,9 +2783,10 @@ async function pagosGenerarOP() {
     total_facturas: totalFac,
     total_pagado: totalPagado,
     saldo: saldo,
-    estado: 'generada',
-    creada: today()
+    estado: editando ? (editando.estado || 'generada') : 'generada',
+    creada: editando ? (editando.creada || today()) : today()
   };
+  if (editando) op.modificada = today();
 
   // Aplicar pagos a las facturas pre-cargadas (modelo nuevo)
   PAGOS_FORM.facturas.forEach(item => {
@@ -2774,7 +2824,12 @@ async function pagosGenerarOP() {
 
   // Guardar OP
   if (!STATE.ops) STATE.ops = [];
-  STATE.ops.push(op);
+  if (editando) {
+    const iOp = STATE.ops.findIndex(o => o.id === num);
+    if (iOp >= 0) STATE.ops[iOp] = op; else STATE.ops.push(op);
+  } else {
+    STATE.ops.push(op);
+  }
 
   // Persistir
   await saveCloud();
@@ -2783,12 +2838,111 @@ async function pagosGenerarOP() {
   pagosMostrarOPView(op);
 
   // Limpiar form y refrescar
+  const eraEdicion = !!editando;
   pagosLimpiar();
   reRenderActive();
-  toast(num + ' generada', 'ok');
+  renderPagosHistorial();
+  toast(num + (eraEdicion ? ' actualizada' : ' generada'), 'ok');
+}
+
+// ── Editar una OP ya generada ───────────────────────────────────
+function pagosEditarOPAbierta() {
+  if (!_opAbierta) return;
+  const op = (STATE.ops||[]).find(o => o.id === _opAbierta.id);
+  if (!op) return;
+  if (op.estado === 'anulada') { toast('No se puede editar una OP anulada', 'warn'); return; }
+  // Si hay algo cargado en el form (y no es esta misma OP), avisar
+  const hayForm = PAGOS_FORM.facturas.length || PAGOS_FORM.chequesFisicos.length ||
+                  PAGOS_FORM.echeqs.length || PAGOS_FORM.propios.length ||
+                  (PAGOS_FORM.retenciones||[]).length || (PAGOS_FORM.efectivo > 0);
+  if (hayForm && (!_opEditando || _opEditando.id !== op.id)) {
+    if (!confirm('Hay una OP a medio cargar en el formulario.\n\n¿Descartarla y editar ' + op.id + '?')) return;
+  }
+
+  // Reset del form sin salir del modo edición
+  PAGOS_FORM = { facturas: [], chequesFisicos: [], echeqs: [], propios: [], retenciones: [], efectivo: 0 };
+  _opEditando = op;
+
+  // Cabecera
+  document.getElementById('pg-proveedor').value = op.proveedor || '';
+  document.getElementById('pg-fecha').value = op.fecha || today();
+  const elTipo = document.getElementById('pg-tipo');
+  if (elTipo) elTipo.value = op.tipo || '1';
+  pagosCambiarTipo(); // ajusta visibilidad de cards (el form está vacío, no borra nada)
+
+  // Facturas
+  PAGOS_FORM.facturas = (op.facturas||[]).map(f => ({
+    factura_id: (f.factura_id != null ? f.factura_id : undefined),
+    a_pagar: (f.factura_id != null) ? (parseFloat(f.a_pagar)||0) : (parseFloat(f.total)||0),
+    numero: f.numero, fecha: f.fecha, condiciones: f.condiciones || '',
+    vencimiento: f.vencimiento || '', total: parseFloat(f.total)||0
+  }));
+
+  // Cheques físicos (tomar el objeto real de STATE para tener caja/estado)
+  PAGOS_FORM.chequesFisicos = (op.cheques_fisicos||[]).map(cSnap => {
+    const c = STATE.cheques.find(x => x.id === cSnap.id);
+    return c ? {...c, importe: parseFloat(c.importe)||0}
+             : {...cSnap, importe: parseFloat(cSnap.importe)||0, caja: (op.tipo === '2' ? 'caja2' : 'caja1')};
+  });
+
+  // Echeqs
+  PAGOS_FORM.echeqs = (op.echeqs||[]).map(eSnap => {
+    const e = (STATE.echeqs||[]).find(x => x.id === eSnap.id);
+    return e ? {...e, importe: parseFloat(e.importe)||0} : {...eSnap, importe: parseFloat(eSnap.importe)||0};
+  });
+
+  // Propios / retenciones / efectivo
+  PAGOS_FORM.propios = (op.propios||[]).map(p => ({...p, importe: parseFloat(p.importe)||0}));
+  PAGOS_FORM.retenciones = (op.retenciones||[]).map(r => ({...r, importe: parseFloat(r.importe)||0}));
+  PAGOS_FORM.efectivo = parseFloat(op.efectivo)||0;
+
+  // Render
+  pagosFacturaRender();
+  pagosFisRender();
+  pagosEchRender();
+  pagosPropioRender();
+  if (typeof pagosRetRender === 'function') pagosRetRender();
+  if (typeof pagosEfectivoRender === 'function') pagosEfectivoRender();
+  pagosResumen();
+  pagosEditBannerRender();
+
+  // Cerrar modal e ir al form
+  document.getElementById('pg-op-view-modal').style.display = 'none';
+  pagosShowTab('nueva');
+  const cont = document.getElementById('pg-tab-nueva-content');
+  if (cont && cont.scrollIntoView) cont.scrollIntoView({behavior:'smooth', block:'start'});
+  toast('Editando ' + op.id, 'ok');
+}
+
+function pagosCancelarEdicion() {
+  if (!_opEditando) return;
+  if (!confirm('¿Cancelar la edición de ' + _opEditando.id + '?\n\nLa OP queda como estaba y se limpia el formulario.')) return;
+  const id = _opEditando.id;
+  pagosLimpiar();
+  toast('Edición de ' + id + ' cancelada', 'ok');
+}
+
+function pagosEditBannerRender() {
+  const banner = document.getElementById('pg-edit-banner');
+  const num = document.getElementById('pg-edit-num');
+  const btn = document.getElementById('pg-btn-generar');
+  const prev = document.getElementById('pg-numero-preview');
+  const lbl = document.getElementById('pg-numero-label');
+  if (_opEditando) {
+    if (banner) banner.style.display = 'flex';
+    if (num) num.textContent = _opEditando.id;
+    if (btn) btn.innerHTML = '💾 Guardar cambios en ' + _opEditando.id;
+    if (prev) prev.textContent = _opEditando.id;
+    if (lbl) lbl.textContent = 'Editando N°: ';
+  } else {
+    if (banner) banner.style.display = 'none';
+    if (btn) btn.innerHTML = '📄 Generar Orden de Pago';
+    if (lbl) lbl.textContent = 'Próximo N°: ';
+  }
 }
 
 function pagosLimpiar() {
+  _opEditando = null;
   PAGOS_FORM = { facturas: [], chequesFisicos: [], echeqs: [], propios: [], retenciones: [], efectivo: 0 };
   document.getElementById('pg-proveedor').value = '';
   document.getElementById('pg-fecha').value = today();
@@ -2803,6 +2957,7 @@ function pagosLimpiar() {
   if (typeof pagosEfectivoRender === 'function') pagosEfectivoRender();
   pagosResumen();
   initPagos(); // recalcular preview de N°
+  pagosEditBannerRender();
 }
 
 // ── Vista imprimible de OP ──────────────────────────────────────
@@ -2815,6 +2970,9 @@ function pagosMostrarOPView(op) {
   let html = '<div class="op-print">';
   html += '<h1>WINFLEX S.A.</h1>';
   html += '<div class="op-num">ORDEN DE PAGO N° ' + op.id + '</div>';
+  if (op.modificada) {
+    html += '<div style="text-align:center;font-size:11px;color:#6b7280;margin-top:-4px">(modificada el ' + fmtD(op.modificada) + ')</div>';
+  }
   if (op.estado === 'anulada') {
     html += '<div style="text-align:center;color:#dc2626;font-size:22px;font-weight:700;border:3px solid #dc2626;padding:6px;margin:8px 0;letter-spacing:3px">ANULADA' + (op.fecha_anulacion ? ' — ' + fmtD(op.fecha_anulacion) : '') + '</div>';
   }
@@ -2891,6 +3049,8 @@ function pagosMostrarOPView(op) {
   // Mostrar/ocultar botones según estado
   const btnAnular = document.getElementById('pg-op-btn-anular');
   const btnEliminar = document.getElementById('pg-op-btn-eliminar');
+  const btnEditar = document.getElementById('pg-op-btn-editar');
+  if (btnEditar) btnEditar.style.display = (op.estado === 'anulada') ? 'none' : '';
   if (btnAnular) btnAnular.style.display = (op.estado === 'anulada') ? 'none' : '';
   if (btnEliminar) btnEliminar.style.display = (op.estado === 'anulada') ? '' : 'none';
   document.getElementById('pg-op-view-modal').style.display = 'flex';
@@ -3633,6 +3793,7 @@ boot();
       <h3 style="margin:0">Orden de Pago</h3>
       <div style="display:flex;gap:8px" id="pg-op-view-actions">
         <button class="btn btn-primary" onclick="window.print()">🖨️ Imprimir</button>
+        <button class="btn" id="pg-op-btn-editar" onclick="pagosEditarOPAbierta()" style="display:none">✏️ Editar</button>
         <button class="btn btn-danger" id="pg-op-btn-anular" onclick="pagosAnularOPAbierta()" style="display:none">Anular OP</button>
         <button class="btn btn-danger" id="pg-op-btn-eliminar" onclick="pagosEliminarOPAbierta()" style="display:none">🗑 Eliminar</button>
         <button class="btn" onclick="document.getElementById('pg-op-view-modal').style.display='none'">Cerrar</button>
