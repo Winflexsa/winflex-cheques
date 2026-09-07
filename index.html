@@ -2670,22 +2670,29 @@ async function pagosGenerarOP() {
       '(cheques, echeqs, propios, efectivo y retenciones) suman ' + fmtM(totalPagado) + '.\n\n' +
       'Las facturas se dan de baja sólo por el importe imputado. Si imputás de más, ' +
       'una factura puede quedar cancelada sin haberla pagado.\n\n' +
-      'ACEPTAR = ajustar la imputación a ' + fmtM(totalPagado) + ' (lo que realmente pagás). ' +
+      'ACEPTAR = ajustar la imputación a ' + fmtM(totalPagado) + ' (lo que realmente pagás), ' +
+      'cancelando primero la factura más vieja y aplicando el remanente a la siguiente. ' +
       'El resto queda como SALDO PENDIENTE para pagar en OPs futuras.\n' +
       'CANCELAR = volver y revisar los importes.'
     );
     if (!ok) return;
-    // Ajustar "a pagar" proporcionalmente (sólo facturas del modelo nuevo)
+    // Ajustar "a pagar" en orden cronológico (FIFO): se cancela primero la factura
+    // más vieja (por vencimiento, o fecha si no tiene) y el remanente va a la
+    // siguiente. Sólo facturas del modelo nuevo; las viejas (sin factura_id)
+    // se imputan por su total y consumen primero.
     const nuevas = PAGOS_FORM.facturas.filter(f => f.factura_id != null);
-    if (nuevas.length && totalImputado > 0) {
-      const factor = totalPagado / totalImputado;
-      PAGOS_FORM.facturas.forEach(f => {
-        if (f.factura_id != null) f.a_pagar = Math.round((parseFloat(f.a_pagar)||0) * factor * 100) / 100;
+    if (nuevas.length) {
+      const viejas = PAGOS_FORM.facturas.filter(f => f.factura_id == null)
+        .reduce((a,f) => a + (parseFloat(f.total)||0), 0);
+      let resto = Math.max(0, totalPagado - viejas);
+      const key = f => (f.vencimiento || f.fecha || '9999-12-31') + '|' + (f.fecha || '') + '|' + (f.numero || '');
+      const orden = [...nuevas].sort((a,b) => key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0);
+      orden.forEach(f => {
+        const pedido = parseFloat(f.a_pagar) || 0;
+        const asignar = Math.min(pedido, resto);
+        f.a_pagar = Math.round(asignar * 100) / 100;
+        resto = Math.round((resto - asignar) * 100) / 100;
       });
-      // Corregir redondeo en la última factura nueva para cuadrar exacto
-      let suma = PAGOS_FORM.facturas.reduce((a,f) => a + (f.factura_id != null ? (parseFloat(f.a_pagar)||0) : (parseFloat(f.total)||0)), 0);
-      const ultima = [...PAGOS_FORM.facturas].reverse().find(f => f.factura_id != null);
-      if (ultima) ultima.a_pagar = Math.round(((parseFloat(ultima.a_pagar)||0) + (totalPagado - suma)) * 100) / 100;
     }
     pagosFacturaRender();
     // Recalcular imputado tras el ajuste
