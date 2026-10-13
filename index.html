@@ -545,10 +545,11 @@ function saveCfg() {
       <div class="card">
         <div class="card-title">Proyección próximas 4 semanas</div>
         <div class="tbl-wrap"><table>
-          <thead><tr><th>Semana</th><th style="text-align:right">Propios a debitar</th><th style="text-align:right">Saldo bancos proyectado</th><th style="text-align:right">Facturas que vencen</th><th style="text-align:right">Cheques/echeqs a cobrar</th><th style="text-align:right" title="Bancos − propios + cheques/echeqs a cobrar − facturas, acumulado">Posición neta acumulada</th></tr></thead>
+          <thead><tr><th>Semana</th><th style="text-align:right">Propios a debitar</th><th style="text-align:right">Saldo bancos proyectado</th><th style="text-align:right">Facturas que vencen</th><th style="text-align:right">Cheques/echeqs a cobrar</th><th style="text-align:right" title="Facturas a cobrar a clientes que vencen en la semana (Seguimiento Cobranzas). Sin vencidas, morosos, juicio ni incobrables">Cobranzas clientes</th><th style="text-align:right" title="Bancos − propios + cheques/echeqs − facturas proveedores, acumulado">Posición neta sin cobranzas</th><th style="text-align:right" title="Igual que la anterior + cobranzas de clientes, acumulado">Posición neta con cobranzas</th></tr></thead>
           <tbody id="db-proy-body"></tbody>
         </table></div>
-        <div class="db-nota">La primera semana incluye las facturas ya vencidas y los cheques que ya se pueden cobrar. La posición neta supone que se cobra todo y se paga todo a término.</div>
+        <div class="db-nota" id="db-cobr-nota"></div>
+        <div class="db-nota">La primera semana incluye las facturas de proveedores ya vencidas y los cheques que ya se pueden cobrar. La posición neta supone que se cobra todo y se paga todo a término.</div>
       </div>
 
       <div class="card">
@@ -3742,6 +3743,63 @@ async function bancosEliminar(id){
   toast('Saldo eliminado','ok');
 }
 
+// ── COBRANZAS DE CLIENTES (lectura de la app Seguimiento Cobranzas, SOLO LECTURA) ──
+// Replica las reglas de Seguimiento Cobranzas: vencimiento por condición del cliente
+// (o manual), saldo neto de notas de crédito, y deja afuera morosos/juicio/incobrables.
+const COBR_BIN = '6a0b2b196877513b27912597';
+let COBR = { ok:false, cargando:false, error:'', ts:0, facturas:[] };
+async function cargarCobranzas(forzar){
+  if (COBR.cargando) return;
+  if (!forzar && COBR.ok && Date.now()-COBR.ts < 5*60*1000) return; // como mucho cada 5 min
+  COBR.cargando = true;
+  try {
+    const r = await fetch('https://api.jsonbin.io/v3/b/'+COBR_BIN+'/latest', { headers: { 'X-Master-Key': CFG.apiKey, 'X-Bin-Meta':'false' } });
+    if (!r.ok) throw new Error('HTTP '+r.status);
+    const d = await r.json(); const rec = (d && d.record) ? d.record : d;
+    if (!rec || !Array.isArray(rec.clientes)) throw new Error('formato inesperado');
+    COBR.facturas = _cobrCalcular(rec.clientes, rec.comprobantes || rec.facturas || []);
+    COBR.ok = true; COBR.error = ''; COBR.ts = Date.now();
+  } catch(e) {
+    console.error('[cargarCobranzas]', e);
+    COBR.error = e.message || String(e);
+    if (!COBR.facturas.length) COBR.ok = false;
+  } finally {
+    COBR.cargando = false;
+    try { if (document.getElementById('pg-dashboard')?.classList.contains('active')) renderDashboard(); } catch(_) {}
+  }
+}
+function _cobrCalcular(clientes, comps){
+  const cli = {}; clientes.forEach(c => cli[c.id] = c);
+  const addDays = (iso,n) => { if(!iso) return ''; const x=new Date(iso.slice(0,10)+'T12:00:00'); x.setDate(x.getDate()+(+n||0)); return x.getFullYear()+'-'+String(x.getMonth()+1).padStart(2,'0')+'-'+String(x.getDate()).padStart(2,'0'); };
+  const isNC = f => String(f.tipo||'').startsWith('NC_');
+  const normNum = s => String(s||'').replace(/\D/g,'').replace(/^0+/,'');
+  const comproNum = s => { const p=String(s||'').trim().split('-'); return normNum(p[p.length-1]); };
+  const comproPto = s => { const raw=String(s||'').trim(), i=raw.lastIndexOf('-'); return i<0?'':normNum(raw.slice(0,i)); };
+  const ncApuntaA = (nc,fac) => {
+    if(!isNC(nc)||isNC(fac)||!nc.asociadaNum||nc.clienteId!==fac.clienteId) return false;
+    const an=comproNum(nc.asociadaNum), fn=comproNum(fac.numero); if(!an||an!==fn) return false;
+    const ap=comproPto(nc.asociadaNum), fp=normNum(fac.ptoVenta); return !(ap&&fp&&ap!==fp);
+  };
+  const cond = f => { const c=cli[f.clienteId]||{};
+    if(f.condicionOverride!=null && f.condicionOverride!=='') return {dias:+f.condicionOverride, modo:f.modoOverride||c.modoVencimiento||'factura'};
+    if(f.tipo==='FC_X' && c.condicionDiasFcX!=null) return {dias:+c.condicionDiasFcX, modo:c.modoVencimientoFcX||c.modoVencimiento||'factura'};
+    return {dias:(c.condicionDias!=null?+c.condicionDias:30), modo:c.modoVencimiento||'factura'}; };
+  const vto = f => { if(f.vencManual && f.fechaVencimiento) return String(f.fechaVencimiento).slice(0,10);
+    const k=cond(f); const base=(k.modo==='remito'&&f.fechaRemito)?f.fechaRemito:(f.fecha||today()); return addDays(String(base).slice(0,10), k.dias); };
+  const cobrado = f => { const imp=+f.importe||0; if(f.cobrado!=null) return +f.cobrado||0; if(f.saldo!=null) return Math.max(0,imp-(+f.saldo||0)); return 0; };
+  const ncAplicada = fac => comps.filter(x=>ncApuntaA(x,fac)).reduce((s,x)=>s+Math.max(0,(+x.importe||0)-cobrado(x)),0);
+  const out = [];
+  comps.forEach(f => {
+    if (isNC(f)) return; // las NC sueltas son crédito a favor del cliente: no son plata a cobrar
+    const saldo = Math.max(0, Math.max(0,(+f.importe||0)-cobrado(f)) - ncAplicada(f));
+    if (saldo <= 0.5) return;
+    const c = cli[f.clienteId] || {};
+    const fuera = f.incobrable ? 'incobrable' : ((c.situacion==='moroso'||c.situacion==='juicio') ? c.situacion : null);
+    out.push({ cliente: c.razonSocial || '', tipo: f.tipo || '', numero: f.numero || '', vto: vto(f), saldo, fuera });
+  });
+  return out;
+}
+
 // ── DASHBOARD ───────────────────────────────────────────────────
 // Cheques propios emitidos en OPs (no anuladas) que todavía no se debitaron
 function propiosPendientes(){
@@ -3859,22 +3917,41 @@ function renderDashboard(){
 
   // ── Proyección 4 semanas
   const addD=(iso,n)=>{const d=new Date(iso+'T12:00:00'); d.setDate(d.getDate()+n); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');};
-  let bk=totBk, neta=totBk, filas='';
+  const cf=(COBR.facturas||[]).filter(x=>!x.fuera);
+  let bk=totBk, neta=totBk, netaC=totBk, filas='';
   for(let w=0; w<4; w++){
     const ini=addD(hoy,w*7), fin=addD(hoy,w*7+6);
     const enRango=f=>f && f<=fin && (w===0 || f>=ini);
     const deb=pp.filter(p=>enRango(p.fecha)).reduce((a,p)=>a+p.importe,0);
     const fac=fp.filter(x=>enRango(x.venc)).reduce((a,x)=>a+x.saldo,0);
     const cob=ac.filter(x=>enRango(x.fecha)).reduce((a,x)=>a+x.importe,0);
-    bk-=deb; neta+=cob-fac-deb;
+    const cli=cf.filter(x=>x.vto && x.vto>=ini && x.vto<=fin).reduce((a,x)=>a+x.saldo,0);
+    bk-=deb; neta+=cob-fac-deb; netaC+=cob-fac-deb+cli;
     filas+='<tr><td style="font-weight:500">'+(w===0?'Esta semana':'Sem. '+(w+1))+' <span style="color:var(--text3);font-size:11.5px">'+fmtD(ini)+' – '+fmtD(fin)+'</span></td>'+
       '<td class="num" style="color:var(--text2)">'+(deb?'−'+fmtM(deb):'—')+'</td>'+
       '<td class="num'+(bk<0?' neg':'')+'" style="font-weight:600">'+fmtM(bk)+'</td>'+
       '<td class="num" style="color:var(--danger)">'+(fac?'−'+fmtM(fac):'—')+'</td>'+
       '<td class="num" style="color:var(--success)">'+(cob?'+'+fmtM(cob):'—')+'</td>'+
-      '<td class="num'+(neta<0?' neg':'')+'" style="font-weight:700">'+fmtM(neta)+'</td></tr>';
+      '<td class="num" style="color:var(--success)">'+(!COBR.ok?'<span style="color:var(--text3)">s/d</span>':(cli?'+'+fmtM(cli):'—'))+'</td>'+
+      '<td class="num'+(neta<0?' neg':'')+'" style="font-weight:600">'+fmtM(neta)+'</td>'+
+      '<td class="num'+(netaC<0?' neg':'')+'" style="font-weight:700">'+(COBR.ok?fmtM(netaC):'<span style="color:var(--text3)">s/d</span>')+'</td></tr>';
   }
   document.getElementById('db-proy-body').innerHTML=filas;
+  const nota=document.getElementById('db-cobr-nota');
+  if(nota){
+    if(COBR.ok){
+      const venc=cf.filter(x=>x.vto && x.vto<hoy), fuera=(COBR.facturas||[]).filter(x=>x.fuera);
+      const lejos=cf.filter(x=>x.vto && x.vto>addD(hoy,27));
+      const h=new Date(COBR.ts).toLocaleTimeString('es-AR',{hour:'2-digit',minute:'2-digit'});
+      nota.innerHTML='<strong>Cobranzas de clientes</strong> (Seguimiento Cobranzas, leído '+h+'): '+
+        'vencidas sin cobrar <strong style="color:var(--danger)">'+fmtM(_sum(venc))+'</strong> ('+_pl(venc.length,'factura')+'), no incluidas en la proyección'+
+        (lejos.length?' · después de 4 semanas '+fmtM(_sum(lejos)):'')+
+        (fuera.length?' · morosos, juicio e incobrables excluidos '+fmtM(_sum(fuera)):'')+
+        (COBR.error?' · <span style="color:var(--warn)">último intento falló, se muestran los datos anteriores</span>':'');
+    } else {
+      nota.innerHTML = COBR.cargando||!COBR.error ? 'Leyendo cobranzas de clientes…' : '<span style="color:var(--warn)">No se pudo leer Seguimiento Cobranzas ('+escapeHtml(COBR.error)+'). La columna con cobranzas queda sin datos.</span>';
+    }
+  }
 
   // ── Últimos pagos
   const ops=(STATE.ops||[]).filter(o=>o.estado!=='anulada')
@@ -4162,6 +4239,7 @@ async function initApp() {
   }
   renderCartera(); renderVencimientos(); renderHistorial(); renderResumen();
   renderDashboard();
+  cargarCobranzas(true);
   if (ES_HIJA) activarInterno(MODULO_VENTANA);
 }
 // ── Manual Save & Load (wrappers que delegan a loadCloud/saveCloud) ─────────
@@ -4179,6 +4257,7 @@ async function guardarCambios() {
 
 async function actualizarDesdeNube() {
   await loadCloud();
+  cargarCobranzas(true);
   reRenderActive();
   if (STATE.cheques && STATE.cheques.length) {
     toast('Datos actualizados desde la nube ('+STATE.cheques.length+' cheques)', 'ok');
@@ -4239,6 +4318,7 @@ async function boot() {
     try {
       await loadCloud();
       reRenderActive();
+      if (document.getElementById('pg-dashboard')?.classList.contains('active')) cargarCobranzas();
     } catch(e) { console.error('[auto-refresh]', e); }
   }, 90000);
 }
@@ -4299,7 +4379,7 @@ function wfVista(v){try{localStorage.setItem('wf_vista',v);}catch(e){}const u=ne
   }
   /* tablas de consulta -> tarjetas */
   const CFG_T={'cart-body-1':['Cliente','Importe'],'cart-body-2':['Cliente','Importe'],'venc-body':['Cliente','Importe'],'ec-body':['Nombre / Librador','Importe'],
-    'fac-body':['Proveedor','Saldo'],'db-fac-body':['Proveedor','Saldo'],'db-bk-body':['Banco','Neto'],'db-proy-body':['Semana','Posición neta acumulada'],'db-cob-body':['Librador','Importe'],'db-prop-body':['Proveedor','Importe'],'db-ops-body':['Proveedor','Total pagado'],'bk-hist-body':['Banco','Saldo'],'pg-hist-body':['Proveedor','Total'],'hist-body':['Cliente','Importe'],'bs-body':['Cliente','Importe']};
+    'fac-body':['Proveedor','Saldo'],'db-fac-body':['Proveedor','Saldo'],'db-bk-body':['Banco','Neto'],'db-proy-body':['Semana','Posición neta con cobranzas'],'db-cob-body':['Librador','Importe'],'db-prop-body':['Proveedor','Importe'],'db-ops-body':['Proveedor','Total pagado'],'bk-hist-body':['Banco','Saldo'],'pg-hist-body':['Proveedor','Total'],'hist-body':['Cliente','Importe'],'bs-body':['Cliente','Importe']};
   function etiquetar(){
     Object.keys(CFG_T).forEach(id=>{ const tb=$(id); if(!tb)return; const t=tb.closest('table'); if(!t)return;
       const ths=[...t.querySelectorAll(':scope>thead th')].map(x=>x.textContent.replace(/\s+/g,' ').trim()); if(!ths.length)return;
