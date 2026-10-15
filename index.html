@@ -424,6 +424,34 @@ function saveCfg() {
   </div>
 </div>
 
+<!-- MODAL: Factura(s) ya pagada(s) por transferencia -->
+<div id="trf-prev-modal" class="modal-bg">
+  <div class="modal-box" style="max-width:760px">
+    <div class="modal-header">
+      <div class="modal-title">💸 Registrar pago por transferencia</div>
+      <button class="modal-close" onclick="trfPrevCerrar()">&#x2715;</button>
+    </div>
+    <div style="font-size:12px;color:var(--text2);margin-bottom:10px">Para facturas que ya se pagaron por transferencia. Tildá todas las que cubre la transferencia: se genera una OP con la transferencia y las facturas quedan canceladas (se puede anular como cualquier OP).</div>
+    <div style="background:#f0fdf4;padding:8px 12px;border-radius:6px;margin-bottom:10px;font-size:13px">Proveedor: <strong id="trf-prev-prov"></strong></div>
+    <div class="tbl-wrap" style="max-height:260px;overflow-y:auto"><table>
+      <thead><tr><th style="width:36px"></th><th>Fecha</th><th>N° Factura</th><th>Venc.</th><th style="text-align:right">Total</th><th style="text-align:right">Saldo</th></tr></thead>
+      <tbody id="trf-prev-body"></tbody>
+    </table></div>
+    <div style="text-align:right;font-size:12px;color:var(--text2);margin:6px 0 12px">Saldo de las tildadas: <strong id="trf-prev-saldo">$ 0</strong></div>
+    <div class="form-grid">
+      <div class="form-group"><label>Banco</label><select id="trf-prev-banco"></select></div>
+      <div class="form-group"><label>Fecha de la transferencia</label><input type="date" id="trf-prev-fecha"></div>
+      <div class="form-group"><label>N° operación / referencia</label><input type="text" id="trf-prev-ref" placeholder="opcional"></div>
+      <div class="form-group"><label>Importe transferido</label><input type="number" id="trf-prev-importe" min="0" step="0.01" oninput="this.dataset.manual='1'"></div>
+    </div>
+    <div style="font-size:11px;color:var(--text3);margin-top:4px">Si el importe es menor al saldo tildado, se cancela primero la factura más vieja y el resto queda pendiente.</div>
+    <div class="btn-row" style="margin-top:14px">
+      <button class="btn btn-primary" onclick="trfPrevGuardar()">Registrar y dar de baja</button>
+      <button class="btn" onclick="trfPrevCerrar()">Cancelar</button>
+    </div>
+  </div>
+</div>
+
 <div id="edit-modal" class="modal-bg">
   <div class="modal-box">
     <div class="modal-header">
@@ -908,6 +936,27 @@ function saveCfg() {
             </table></div>
             <div id="pg-prop-empty" style="text-align:center;padding:8px;color:var(--text3);font-size:12px">Ningún cheque propio</div>
             <div style="text-align:right;margin-top:6px;font-size:12px;color:var(--text2)">Subtotal: <strong id="pg-prop-total">$ 0</strong></div>
+          </div>
+
+          <!-- Transferencias bancarias -->
+          <div id="pg-card-transferencias" style="margin-bottom:6px;padding:10px;border:1px solid var(--border);border-radius:8px;background:#fafafa">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+              <strong style="font-size:13px">🏦 Transferencias</strong>
+              <span style="font-size:11px;color:var(--text3)">Desde cuentas de Winflex</span>
+              <button class="btn btn-sm" onclick="pagosTrfAdd()">+ Agregar transferencia</button>
+            </div>
+            <div class="tbl-wrap" id="pg-trf-wrap" style="margin-top:6px;display:none"><table id="pg-trf-table">
+              <thead><tr>
+                <th style="width:130px">Banco</th>
+                <th style="width:140px">Fecha</th>
+                <th>N° operación / referencia</th>
+                <th style="width:140px;text-align:right">Importe</th>
+                <th style="width:40px"></th>
+              </tr></thead>
+              <tbody id="pg-trf-body"></tbody>
+            </table></div>
+            <div id="pg-trf-empty" style="text-align:center;padding:8px;color:var(--text3);font-size:12px">Ninguna transferencia</div>
+            <div style="text-align:right;margin-top:6px;font-size:12px;color:var(--text2)">Subtotal: <strong id="pg-trf-total">$ 0</strong></div>
           </div>
 
           <!-- Retenciones (cuenta como pago y descuenta saldo de facturas) -->
@@ -2241,6 +2290,9 @@ function facturaVerDetalle(id) {
 
   // Acciones
   let acc = '<button class="btn" onclick="facturaCerrarDetalle()">Cerrar</button>';
+  if (estado === 'pendiente' || estado === 'pagada_parcial') {
+    acc = '<button class="btn btn-primary" onclick="trfPrevAbrir('+id+')">💸 Pagada por transferencia</button> ' + acc;
+  }
   if (estado === 'pendiente') {
     acc = '<button class="btn btn-danger" onclick="facturaAnular('+id+')">Anular factura</button> <button class="btn" onclick="facturaAbrirEditar('+id+');facturaCerrarDetalle()">Editar</button> ' + acc;
   } else if (estado === 'anulada' && !(f.pagos||[]).length) {
@@ -2249,6 +2301,98 @@ function facturaVerDetalle(id) {
   document.getElementById('fac-det-acciones').innerHTML = acc;
 
   document.getElementById('fac-detalle-modal').style.display = 'flex';
+}
+
+// ── Facturas ya pagadas por transferencia (registro retroactivo → genera OP) ──
+let _trfPrevProv = null;
+function trfPrevAbrir(facturaId) {
+  const f = STATE.facturas.find(x => x.id === facturaId);
+  if (!f) return;
+  _trfPrevProv = f.proveedor || '';
+  document.getElementById('trf-prev-prov').textContent = _trfPrevProv;
+  const pend = STATE.facturas.filter(x => !x.anulada && (x.proveedor||'') === _trfPrevProv && facturaSaldo(x) > 0.01)
+    .sort((a,b) => (a.vencimiento||a.fecha||'').localeCompare(b.vencimiento||b.fecha||''));
+  document.getElementById('trf-prev-body').innerHTML = pend.map(x =>
+    '<tr><td><input type="checkbox" class="trf-prev-chk" value="'+x.id+'"'+(x.id===facturaId?' checked':'')+' onchange="trfPrevCalc()"></td>'+
+    '<td>'+fmtD(x.fecha)+'</td><td style="font-family:DM Mono,monospace;font-size:12px">'+escapeHtml(x.numero||'')+'</td>'+
+    '<td>'+(x.vencimiento?fmtD(x.vencimiento):'—')+'</td><td style="text-align:right">'+fmtM(x.total||0)+'</td>'+
+    '<td style="text-align:right;font-weight:600">'+fmtM(facturaSaldo(x))+'</td></tr>').join('');
+  document.getElementById('trf-prev-banco').innerHTML = BANCOS_EMPRESA.map(b => '<option value="'+b+'">'+b+'</option>').join('');
+  document.getElementById('trf-prev-fecha').value = f.vencimiento && f.vencimiento <= today() ? f.vencimiento : today();
+  document.getElementById('trf-prev-ref').value = '';
+  const imp = document.getElementById('trf-prev-importe'); imp.value = ''; delete imp.dataset.manual;
+  trfPrevCalc();
+  facturaCerrarDetalle();
+  document.getElementById('trf-prev-modal').style.display = 'flex';
+}
+function _trfPrevSel() {
+  const ids = [...document.querySelectorAll('.trf-prev-chk:checked')].map(c => parseInt(c.value));
+  return STATE.facturas.filter(f => ids.includes(f.id));
+}
+function trfPrevCalc() {
+  const tot = _trfPrevSel().reduce((a,f) => a + facturaSaldo(f), 0);
+  document.getElementById('trf-prev-saldo').textContent = fmtM(tot);
+  const imp = document.getElementById('trf-prev-importe');
+  if (!imp.dataset.manual) imp.value = tot > 0 ? (Math.round(tot*100)/100).toFixed(2) : '';
+}
+function trfPrevCerrar() {
+  document.getElementById('trf-prev-modal').style.display = 'none';
+  _trfPrevProv = null;
+}
+async function trfPrevGuardar() {
+  const sel = _trfPrevSel();
+  const banco = document.getElementById('trf-prev-banco').value;
+  const fecha = document.getElementById('trf-prev-fecha').value;
+  const ref = document.getElementById('trf-prev-ref').value.trim();
+  const importe = Math.round((parseFloat(document.getElementById('trf-prev-importe').value)||0) * 100) / 100;
+  if (!sel.length) { toast('Tildá al menos una factura', 'warn'); return; }
+  if (!fecha) { toast('Falta la fecha de la transferencia', 'warn'); return; }
+  if (importe <= 0) { toast('Falta el importe transferido', 'warn'); return; }
+  const totSaldo = Math.round(sel.reduce((a,f) => a + facturaSaldo(f), 0) * 100) / 100;
+  if (importe > totSaldo + 0.01 && !confirm('El importe transferido (' + fmtM(importe) + ') supera el saldo de las facturas tildadas (' + fmtM(totSaldo) + ').\n\nSe imputa solo el saldo y la diferencia queda como saldo a favor en la OP. ¿Seguir?')) return;
+  // Imputación FIFO (más vieja primero)
+  const key = f => (f.vencimiento || f.fecha || '9999-12-31') + '|' + (f.fecha || '') + '|' + (f.numero || '');
+  const orden = [...sel].sort((a,b) => key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0);
+  let resto = importe;
+  const items = [];
+  orden.forEach(f => {
+    const asignar = Math.round(Math.min(facturaSaldo(f), resto) * 100) / 100;
+    resto = Math.round((resto - asignar) * 100) / 100;
+    if (asignar > 0) items.push({ f, asignar });
+  });
+  const imputado = items.reduce((a,x) => a + x.asignar, 0);
+  const resumen = items.map(x => '  • ' + (x.f.numero||x.f.id) + ': ' + fmtM(x.asignar) + (x.asignar < facturaSaldo(x.f) - 0.01 ? ' (parcial)' : '')).join('\n');
+  if (!confirm('Se va a generar una OP para ' + _trfPrevProv + ' con transferencia ' + banco + ' del ' + fmtD(fecha) + ' por ' + fmtM(importe) + '.\n\nImputación:\n' + resumen + '\n\n¿Confirmar?')) return;
+
+  const año = new Date().getFullYear();
+  if (!STATE.opSeq) STATE.opSeq = {};
+  STATE.opSeq[año] = (STATE.opSeq[año] || 0) + 1;
+  const num = `OP-${año}-${String(STATE.opSeq[año]).padStart(4,'0')}`;
+  const op = {
+    id: num, tipo: '1', fecha: fecha, proveedor: _trfPrevProv,
+    facturas: items.map(x => ({
+      factura_id: x.f.id, a_pagar: x.asignar, numero: x.f.numero, fecha: x.f.fecha,
+      condiciones: x.f.condiciones || '', vencimiento: x.f.vencimiento || '', total: parseFloat(x.f.total)||0
+    })),
+    cheques_fisicos: [], echeqs: [], propios: [], retenciones: [],
+    transferencias: [{ banco, fecha, referencia: ref, importe }],
+    efectivo: 0,
+    total_facturas: imputado, total_pagado: importe, saldo: Math.round((imputado - importe)*100)/100,
+    estado: 'generada', creada: today(), origen: 'transferencia_previa'
+  };
+  items.forEach(x => {
+    if (!x.f.pagos) x.f.pagos = [];
+    x.f.pagos.push({ op_id: num, fecha: fecha, monto: x.asignar });
+  });
+  if (!STATE.ops) STATE.ops = [];
+  STATE.ops.push(op);
+  if (!STATE.proveedores) STATE.proveedores = [];
+  if (_trfPrevProv && !STATE.proveedores.includes(_trfPrevProv)) STATE.proveedores.push(_trfPrevProv);
+  await saveCloud();
+  trfPrevCerrar();
+  initFacturas();
+  if (typeof renderPagosHistorial === 'function') renderPagosHistorial();
+  toast(num + ' generada — ' + items.length + ' factura(s) dadas de baja por transferencia', 'ok');
 }
 
 function facturaCerrarDetalle() {
@@ -2334,7 +2478,7 @@ async function facturaEliminar(id) {
 }
 
 // ── PAGO A PROVEEDORES ──────────────────────────────────────────
-let PAGOS_FORM = { facturas: [], chequesFisicos: [], echeqs: [], propios: [], retenciones: [], efectivo: 0 };
+let PAGOS_FORM = { facturas: [], chequesFisicos: [], echeqs: [], propios: [], retenciones: [], transferencias: [], efectivo: 0 };
 let PAGOS_SEL_FIS = new Set(); // selección temporal del modal selector
 let PAGOS_SEL_ECH = new Set();
 let _opEditando = null; // OP que se está editando (referencia a la OP original en STATE.ops)
@@ -2373,6 +2517,7 @@ function initPagos() {
   pagosFisRender();
   pagosEchRender();
   pagosPropioRender();
+  pagosTrfRender();
   pagosResumen();
   // Update count
   const cnt = document.getElementById('pg-count-ops');
@@ -2396,6 +2541,9 @@ function pagosCambiarTipo() {
   const cardEch = document.getElementById('pg-card-echeqs');
   const cardProp = document.getElementById('pg-card-propios');
   const cardEfe = document.getElementById('pg-card-efectivo');
+  const cardTrf = document.getElementById('pg-card-transferencias');
+  if (cardTrf) cardTrf.style.display = tipo === '2' ? 'none' : '';
+  if (tipo === '2' && (PAGOS_FORM.transferencias||[]).length) { PAGOS_FORM.transferencias = []; pagosTrfRender(); }
   if (tipo === '2') {
     // Tipo 2: caja2 + efectivo (sin echeqs ni propios)
     if (cardEch) cardEch.style.display = 'none';
@@ -2817,6 +2965,59 @@ function pagosPropioRender() {
   if (elTot) elTot.textContent = fmtM(tot);
 }
 
+// ── Transferencias bancarias (medio de pago) ──
+function pagosTrfAdd() {
+  if (!PAGOS_FORM.transferencias) PAGOS_FORM.transferencias = [];
+  const fecha = document.getElementById('pg-fecha')?.value || today();
+  PAGOS_FORM.transferencias.push({ banco: BANCOS_EMPRESA[0], fecha: fecha, referencia: '', importe: '' });
+  pagosTrfRender();
+}
+function pagosTrfRemove(idx) {
+  PAGOS_FORM.transferencias.splice(idx, 1);
+  pagosTrfRender();
+  pagosResumen();
+}
+function pagosTrfUpdate(idx, campo, valor) {
+  if (!PAGOS_FORM.transferencias[idx]) return;
+  PAGOS_FORM.transferencias[idx][campo] = valor;
+  if (campo === 'importe') {
+    const tot = PAGOS_FORM.transferencias.reduce((a,t) => a + (parseFloat(t.importe)||0), 0);
+    const el = document.getElementById('pg-trf-total'); if (el) el.textContent = fmtM(tot);
+  }
+  pagosResumen();
+}
+function _trfBancoOpts(sel) {
+  const lista = BANCOS_EMPRESA.includes(sel) || !sel ? BANCOS_EMPRESA : [...BANCOS_EMPRESA, sel];
+  return lista.map(b => `<option value="${escapeHtml(b)}"${b===sel?' selected':''}>${escapeHtml(b)}</option>`).join('');
+}
+function pagosTrfRender() {
+  const tbody = document.getElementById('pg-trf-body');
+  const empty = document.getElementById('pg-trf-empty');
+  const wrap = document.getElementById('pg-trf-wrap');
+  const elTot = document.getElementById('pg-trf-total');
+  if (!tbody) return;
+  const list = PAGOS_FORM.transferencias || [];
+  if (list.length === 0) {
+    tbody.innerHTML = '';
+    if (empty) empty.style.display = 'block';
+    if (wrap) wrap.style.display = 'none';
+    if (elTot) elTot.textContent = '$ 0';
+    return;
+  }
+  if (empty) empty.style.display = 'none';
+  if (wrap) wrap.style.display = '';
+  const st = 'width:100%;padding:5px 7px;border:1px solid var(--border);border-radius:4px;font-size:12px';
+  tbody.innerHTML = list.map((t,i) => `<tr>
+      <td><select onchange="pagosTrfUpdate(${i},'banco',this.value)" style="${st}">${_trfBancoOpts(t.banco)}</select></td>
+      <td><input type="date" value="${t.fecha||''}" onchange="pagosTrfUpdate(${i},'fecha',this.value)" style="${st}"></td>
+      <td><input type="text" value="${escapeHtml(t.referencia||'')}" oninput="pagosTrfUpdate(${i},'referencia',this.value)" placeholder="opcional" style="${st}"></td>
+      <td><input type="number" min="0" step="0.01" value="${t.importe||''}" oninput="pagosTrfUpdate(${i},'importe',this.value)" style="${st};text-align:right"></td>
+      <td><button class="btn btn-sm btn-danger" onclick="pagosTrfRemove(${i})" title="Eliminar">✕</button></td>
+    </tr>`).join('');
+  const tot = list.reduce((a,t) => a + (parseFloat(t.importe)||0), 0);
+  if (elTot) elTot.textContent = fmtM(tot);
+}
+
 // ── Retenciones (cuentan como medio de pago y descuentan saldo de facturas) ──
 const RET_CONCEPTOS = ['Ganancias','IVA','IIBB','SUSS','SICORE','Otra'];
 function pagosRetAdd() {
@@ -2877,7 +3078,8 @@ function pagosResumen() {
   const totalProp = PAGOS_FORM.propios.reduce((a,p) => a + (parseFloat(p.importe)||0), 0);
   const totalEfe = (typeof PAGOS_FORM.efectivo === 'number') ? PAGOS_FORM.efectivo : (parseFloat(PAGOS_FORM.efectivo)||0);
   const totalRet = (PAGOS_FORM.retenciones||[]).reduce((a,r) => a + (parseFloat(r.importe)||0), 0);
-  const totalPagado = totalFis + totalEch + totalProp + totalEfe + totalRet;
+  const totalTrf = (PAGOS_FORM.transferencias||[]).reduce((a,t) => a + (parseFloat(t.importe)||0), 0);
+  const totalPagado = totalFis + totalEch + totalProp + totalEfe + totalRet + totalTrf;
   const saldo = totalFac - totalPagado;
   const elFacTot = document.getElementById('pg-fac-total');
   if (elFacTot) elFacTot.textContent = fmtM(totalFac);
@@ -2921,7 +3123,14 @@ async function pagosGenerarOP() {
       toast('La retención ' + (retList[i].concepto||(i+1)) + ' tiene importe en 0', 'warn'); return;
     }
   }
-  const totalMedios = PAGOS_FORM.chequesFisicos.length + PAGOS_FORM.echeqs.length + PAGOS_FORM.propios.length + retList.length + (totalEfe > 0 ? 1 : 0);
+  const trfList = PAGOS_FORM.transferencias || [];
+  for (let i = 0; i < trfList.length; i++) {
+    if (!parseFloat(trfList[i].importe) || parseFloat(trfList[i].importe) <= 0) {
+      toast('La transferencia ' + (i+1) + ' (' + (trfList[i].banco||'') + ') tiene importe en 0', 'warn'); return;
+    }
+    if (!trfList[i].fecha) { toast('Falta la fecha de la transferencia ' + (i+1), 'warn'); return; }
+  }
+  const totalMedios = PAGOS_FORM.chequesFisicos.length + PAGOS_FORM.echeqs.length + PAGOS_FORM.propios.length + retList.length + trfList.length + (totalEfe > 0 ? 1 : 0);
   if (totalMedios === 0) { toast('Falta al menos un medio de pago', 'warn'); return; }
 
   // Total efectivamente pagado (incluye retenciones, que descuentan saldo de factura)
@@ -2929,7 +3138,8 @@ async function pagosGenerarOP() {
   const totalEch = PAGOS_FORM.echeqs.reduce((a,e) => a + (parseFloat(e.importe)||0), 0);
   const totalProp = PAGOS_FORM.propios.reduce((a,p) => a + (parseFloat(p.importe)||0), 0);
   const totalRet = retList.reduce((a,r) => a + (parseFloat(r.importe)||0), 0);
-  const totalPagado = totalFis + totalEch + totalProp + totalEfe + totalRet;
+  const totalTrf = trfList.reduce((a,t) => a + (parseFloat(t.importe)||0), 0);
+  const totalPagado = totalFis + totalEch + totalProp + totalEfe + totalRet + totalTrf;
 
   // Importe imputado a las facturas (suma de "a pagar"). La factura se da de baja SÓLO por esto.
   let totalImputado = PAGOS_FORM.facturas.reduce((a,f) => {
@@ -2942,7 +3152,7 @@ async function pagosGenerarOP() {
   if (totalImputado > totalPagado + 0.01) {
     const ok = confirm(
       'Estás imputando ' + fmtM(totalImputado) + ' a las facturas, pero los medios de pago ' +
-      '(cheques, echeqs, propios, efectivo y retenciones) suman ' + fmtM(totalPagado) + '.\n\n' +
+      '(cheques, echeqs, propios, transferencias, efectivo y retenciones) suman ' + fmtM(totalPagado) + '.\n\n' +
       'Las facturas se dan de baja sólo por el importe imputado. Si imputás de más, ' +
       'una factura puede quedar cancelada sin haberla pagado.\n\n' +
       'ACEPTAR = ajustar la imputación a ' + fmtM(totalPagado) + ' (lo que realmente pagás), ' +
@@ -3061,6 +3271,9 @@ async function pagosGenerarOP() {
     retenciones: (PAGOS_FORM.retenciones||[]).map(r => ({
       concepto: r.concepto, detalle: r.detalle||'', importe: parseFloat(r.importe)||0
     })),
+    transferencias: trfList.map(t => ({
+      banco: t.banco||'', fecha: t.fecha||'', referencia: t.referencia||'', importe: parseFloat(t.importe)||0
+    })),
     efectivo: totalEfe,
     total_facturas: totalFac,
     total_pagado: totalPagado,
@@ -3069,6 +3282,7 @@ async function pagosGenerarOP() {
     creada: editando ? (editando.creada || today()) : today()
   };
   if (editando) op.modificada = today();
+  if (editando && editando.origen) op.origen = editando.origen;
 
   // Aplicar pagos a las facturas pre-cargadas (modelo nuevo)
   PAGOS_FORM.facturas.forEach(item => {
@@ -3136,13 +3350,13 @@ function pagosEditarOPAbierta() {
   // Si hay algo cargado en el form (y no es esta misma OP), avisar
   const hayForm = PAGOS_FORM.facturas.length || PAGOS_FORM.chequesFisicos.length ||
                   PAGOS_FORM.echeqs.length || PAGOS_FORM.propios.length ||
-                  (PAGOS_FORM.retenciones||[]).length || (PAGOS_FORM.efectivo > 0);
+                  (PAGOS_FORM.retenciones||[]).length || (PAGOS_FORM.transferencias||[]).length || (PAGOS_FORM.efectivo > 0);
   if (hayForm && (!_opEditando || _opEditando.id !== op.id)) {
     if (!confirm('Hay una OP a medio cargar en el formulario.\n\n¿Descartarla y editar ' + op.id + '?')) return;
   }
 
   // Reset del form sin salir del modo edición
-  PAGOS_FORM = { facturas: [], chequesFisicos: [], echeqs: [], propios: [], retenciones: [], efectivo: 0 };
+  PAGOS_FORM = { facturas: [], chequesFisicos: [], echeqs: [], propios: [], retenciones: [], transferencias: [], efectivo: 0 };
   _opEditando = op;
 
   // Cabecera
@@ -3176,6 +3390,7 @@ function pagosEditarOPAbierta() {
   // Propios / retenciones / efectivo
   PAGOS_FORM.propios = (op.propios||[]).map(p => ({...p, importe: parseFloat(p.importe)||0}));
   PAGOS_FORM.retenciones = (op.retenciones||[]).map(r => ({...r, importe: parseFloat(r.importe)||0}));
+  PAGOS_FORM.transferencias = (op.transferencias||[]).map(t => ({...t, importe: parseFloat(t.importe)||0}));
   PAGOS_FORM.efectivo = parseFloat(op.efectivo)||0;
 
   // Render
@@ -3184,6 +3399,7 @@ function pagosEditarOPAbierta() {
   pagosEchRender();
   pagosPropioRender();
   if (typeof pagosRetRender === 'function') pagosRetRender();
+  if (typeof pagosTrfRender === 'function') pagosTrfRender();
   if (typeof pagosEfectivoRender === 'function') pagosEfectivoRender();
   pagosResumen();
   pagosEditBannerRender();
@@ -3225,7 +3441,7 @@ function pagosEditBannerRender() {
 
 function pagosLimpiar() {
   _opEditando = null;
-  PAGOS_FORM = { facturas: [], chequesFisicos: [], echeqs: [], propios: [], retenciones: [], efectivo: 0 };
+  PAGOS_FORM = { facturas: [], chequesFisicos: [], echeqs: [], propios: [], retenciones: [], transferencias: [], efectivo: 0 };
   document.getElementById('pg-proveedor').value = '';
   document.getElementById('pg-fecha').value = today();
   const elTipo = document.getElementById('pg-tipo');
@@ -3236,6 +3452,7 @@ function pagosLimpiar() {
   pagosEchRender();
   pagosPropioRender();
   if (typeof pagosRetRender === 'function') pagosRetRender();
+  if (typeof pagosTrfRender === 'function') pagosTrfRender();
   if (typeof pagosEfectivoRender === 'function') pagosEfectivoRender();
   pagosResumen();
   initPagos(); // recalcular preview de N°
@@ -3259,6 +3476,7 @@ function pagosMostrarOPView(op) {
     html += '<div style="text-align:center;color:#dc2626;font-size:22px;font-weight:700;border:3px solid #dc2626;padding:6px;margin:8px 0;letter-spacing:3px">ANULADA' + (op.fecha_anulacion ? ' — ' + fmtD(op.fecha_anulacion) : '') + '</div>';
   }
   html += '<div class="info-row"><div><strong>Proveedor:</strong> ' + (op.proveedor||'') + '</div><div><strong>Fecha:</strong> ' + (op.fecha?fmtD(op.fecha):'') + '</div></div>';
+  if (op.origen === 'transferencia_previa') html += '<div style="text-align:center;font-size:11px;color:#6b7280;margin:-2px 0 6px">Registro de pago por transferencia ya realizada</div>';
   if (op.tipo) html += '<div class="info-row"><div style="font-size:11px;color:#555">Tipo de OP: ' + (op.tipo === '2' || op.tipo === 2 ? 'Tipo 2 (Caja 2)' : 'Tipo 1 (Caja 1 + Echeqs)') + '</div></div>';
 
   // Facturas
@@ -3294,6 +3512,14 @@ function pagosMostrarOPView(op) {
     html += '<table><thead><tr><th>Tipo</th><th>Banco</th><th>N°</th><th>F.Cobro</th><th style="text-align:right">Importe</th></tr></thead><tbody>';
     op.propios.forEach(p => {
       html += `<tr><td>${p.tipo==='echeq'?'Echeq':'Físico'}</td><td>${p.banco||''}</td><td>${p.numero||''}</td><td>${p.fecha_cobro?fmtD(p.fecha_cobro):''}</td><td class="num">${fmtM(p.importe)}</td></tr>`;
+    });
+    html += '</tbody></table>';
+  }
+  if (op.transferencias && op.transferencias.length) {
+    html += '<div class="seccion">TRANSFERENCIAS BANCARIAS</div>';
+    html += '<table><thead><tr><th>Banco</th><th>Fecha</th><th>N° operación</th><th style="text-align:right">Importe</th></tr></thead><tbody>';
+    op.transferencias.forEach(t => {
+      html += `<tr><td>${escapeHtml(t.banco||'')}</td><td>${t.fecha?fmtD(t.fecha):''}</td><td>${escapeHtml(t.referencia||'')}</td><td class="num">${fmtM(t.importe)}</td></tr>`;
     });
     html += '</tbody></table>';
   }
@@ -3453,7 +3679,7 @@ function renderPagosHistorial() {
   }
   if (empty) empty.style.display = 'none';
   tbody.innerHTML = lista.map(o => {
-    const medios = (o.cheques_fisicos?.length||0) + (o.echeqs?.length||0) + (o.propios?.length||0);
+    const medios = (o.cheques_fisicos?.length||0) + (o.echeqs?.length||0) + (o.propios?.length||0) + (o.transferencias?.length||0);
     const anulada = o.estado === 'anulada';
     const rowStyle = anulada ? 'cursor:pointer;color:var(--text3);background:#fafafa' : 'cursor:pointer';
     const idStyle = anulada ? 'color:var(--text3);text-decoration:line-through' : 'color:var(--accent)';
@@ -3961,6 +4187,7 @@ function renderDashboard(){
     if(n(o.cheques_fisicos)) m.push(n(o.cheques_fisicos)+' cheque'+(n(o.cheques_fisicos)>1?'s':''));
     if(n(o.echeqs)) m.push(n(o.echeqs)+' echeq'+(n(o.echeqs)>1?'s':''));
     if(n(o.propios)) m.push(n(o.propios)+' propio'+(n(o.propios)>1?'s':''));
+    if(n(o.transferencias)) m.push(n(o.transferencias)>1?n(o.transferencias)+' transferencias':'transferencia');
     if(n(o.retenciones)) m.push('retenciones');
     if(o.efectivo>0) m.push('efectivo');
     return '<tr style="cursor:pointer" onclick="pagosOpenOPView(\''+o.id+'\')"><td>'+fmtD(o.fecha)+'</td><td style="color:var(--accent);font-weight:600;white-space:nowrap">'+o.id+'</td><td style="font-weight:500">'+escapeHtml(o.proveedor||'')+'</td><td style="font-size:12px;color:var(--text2)">'+m.join(', ')+'</td><td class="num" style="font-weight:600">'+fmtM(o.total_pagado||0)+'</td></tr>';
@@ -4302,6 +4529,8 @@ async function boot() {
       const tieneCheques = LOTE.some(r => (r.numero||r.banco||r.importe||r.fecha_cobro||r.cuit));
       if (reciboVal || clienteVal || tieneCheques) return;
     }
+    // No refrescar si está registrando una transferencia ya hecha
+    if (document.getElementById('trf-prev-modal')?.style.display === 'flex') return;
     // No refrescar si está cargando saldos bancarios
     if (document.getElementById('pg-bancos')?.classList.contains('active') && bancosFormTieneDatos()) return;
     // No refrescar si está armando una OP con datos
@@ -4313,7 +4542,8 @@ async function boot() {
       const tieneEch = PAGOS_FORM.echeqs.length > 0;
       const tieneProp = PAGOS_FORM.propios.length > 0;
       const tieneRet = (PAGOS_FORM.retenciones||[]).length > 0;
-      if (provVal || tieneFac || tieneFis || tieneEch || tieneProp || tieneRet) return;
+      const tieneTrf = (PAGOS_FORM.transferencias||[]).length > 0;
+      if (provVal || tieneFac || tieneFis || tieneEch || tieneProp || tieneRet || tieneTrf) return;
     }
     try {
       await loadCloud();
